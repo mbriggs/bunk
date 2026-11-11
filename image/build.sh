@@ -1,7 +1,7 @@
 #!/bin/sh
 # build.sh: build the box image and export it to $PUNCHCLOCK_HOME/image/rootfs.ext4.
-# Run on the build machine from this directory, with a linux punchclock binary
-# at ./punchclock. podman owns /etc/hosts and /etc/hostname at build time, so
+# Run on the build machine from this directory, with linux binaries of
+# punchclock and ferry at ./punchclock and ./ferry. podman owns /etc/hosts and /etc/hostname at build time, so
 # they're written here; each box renames itself at boot.
 set -eu
 home=${PUNCHCLOCK_HOME:-$HOME/.local/share/punchclock}

@@ -4,8 +4,16 @@ FROM localhost/box-vm:amd64
 COPY punchclock /usr/local/bin/punchclock
 COPY punchclock-identity /usr/local/bin/punchclock-identity
 COPY units/ /etc/systemd/system/
+# The box is the boundary: Claude runs without permission prompts, and ferry
+# answers the folder-trust prompt for whatever task it hands in (the sandbox
+# marker). ferry is copied from a ferry checkout's dist/ at build time, so it
+# speaks the same protocol as the laptop's.
+COPY --chown=1000:1000 claude-settings.json /home/mbriggs/.claude/settings.json
+COPY --chown=1000:1000 ferry /home/mbriggs/.local/bin/ferry
 # Each box gets its own host key from its identity drive; none ship in the image.
 RUN rm -f /etc/ssh/ssh_host_* /usr/local/bin/vsockrelay && \
     printf 'HostKey /etc/ssh/ssh_host_ed25519_key\n' > /etc/ssh/sshd_config.d/punchclock.conf && \
-    chmod 755 /usr/local/bin/punchclock /usr/local/bin/punchclock-identity && \
+    chmod 755 /usr/local/bin/punchclock /usr/local/bin/punchclock-identity /home/mbriggs/.local/bin/ferry && \
+    install -d -o 1000 -g 1000 /home/mbriggs/.config/ferry && \
+    install -o 1000 -g 1000 -m 644 /dev/null /home/mbriggs/.config/ferry/sandbox && \
     systemctl enable punchclock-identity.service
