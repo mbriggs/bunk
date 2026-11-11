@@ -10,7 +10,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -90,9 +89,9 @@ func up(name string) error {
 			return err
 		}
 	}
-	exited := make(chan error, 1)
+	var exited <-chan error
 	if !b.Running() {
-		if err := startSupervisor(b, exited); err != nil {
+		if exited, err = b.Start(); err != nil {
 			return err
 		}
 	}
@@ -115,28 +114,6 @@ func up(name string) error {
 	}
 	fmt.Fprintf(os.Stderr, "%s: up in %v\n", name, time.Since(start).Round(10*time.Millisecond))
 	fmt.Println(key)
-	return nil
-}
-
-// startSupervisor runs `punchclock supervise` for b in its own session,
-// logging to the box's directory. exited receives its exit.
-func startSupervisor(b box.Box, exited chan<- error) error {
-	self, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	logf, err := os.OpenFile(b.Dir+"/supervisor.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer logf.Close()
-	sup := exec.Command(self, "supervise", b.Name)
-	sup.Stdout, sup.Stderr = logf, logf
-	sup.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := sup.Start(); err != nil {
-		return err
-	}
-	go func() { exited <- sup.Wait() }()
 	return nil
 }
 

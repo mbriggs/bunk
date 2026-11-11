@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -82,6 +83,14 @@ func (b Box) Run(ctx context.Context) error {
 	defer os.Remove(b.path("pid"))
 	b.clearRunState()
 	defer b.clearRunState()
+	if err := b.killOrphanVM(); err != nil {
+		return err
+	}
+	// The config is derived from the box's directory, so it's written fresh
+	// on each start rather than kept.
+	if err := b.writeVMConfig(); err != nil {
+		return err
+	}
 
 	var ports []uint32
 	for _, c := range b.channels() {
@@ -112,6 +121,11 @@ func (b Box) Run(ctx context.Context) error {
 		return err
 	}
 	log.Printf("box %s: VM pid %d", b.Name, cmd.Process.Pid)
+	if err := os.WriteFile(b.path("vm.pid"), []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o600); err != nil {
+		cmd.Process.Kill()
+		return err
+	}
+	defer os.Remove(b.path("vm.pid"))
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
 	select {
@@ -128,6 +142,32 @@ func (b Box) Run(ctx context.Context) error {
 		log.Printf("box %s: stopped", b.Name)
 		return nil
 	}
+}
+
+// Start runs this binary's `supervise NAME` for the box in its own session,
+// so it outlives the caller, logging to supervisor.log. The channel receives
+// its exit. A ready file left by a supervisor that died is removed first, so
+// WaitReady sees this boot's.
+func (b Box) Start() (<-chan error, error) {
+	os.Remove(b.path("ready"))
+	self, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	logf, err := os.OpenFile(b.path("supervisor.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	defer logf.Close()
+	sup := exec.Command(self, "supervise", b.Name)
+	sup.Stdout, sup.Stderr = logf, logf
+	sup.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := sup.Start(); err != nil {
+		return nil, err
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- sup.Wait() }()
+	return exited, nil
 }
 
 // serveReady marks the box ready when the guest connects, which it does once

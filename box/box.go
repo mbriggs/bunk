@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -59,27 +60,39 @@ func (b Box) Exists() bool {
 	return err == nil
 }
 
-// Create makes the box's directory, disk, identity drive, and VM config. It
-// fails if the box already exists.
+// Create makes the box's directory, disk, and identity drive. It builds them
+// in NAME.new and renames that into place, so a box that exists is whole: a
+// crash or a racing `up` can never boot a half-made one. It fails if the box
+// already exists.
 func (b Box) Create() error {
 	if err := os.MkdirAll(filepath.Dir(b.Dir), 0o755); err != nil {
 		return err
 	}
-	if err := os.Mkdir(b.Dir, 0o700); err != nil {
+	if b.Exists() {
+		return fmt.Errorf("box %s already exists", b.Name)
+	}
+	// NAME.new isn't a valid box name, so List never shows one a crash left.
+	staged := Box{Name: b.Name, Dir: b.Dir + ".new"}
+	os.RemoveAll(staged.Dir)
+	if err := os.Mkdir(staged.Dir, 0o700); err != nil {
+		return err
+	}
+	if err := clone(filepath.Join(Home(), "image", "rootfs.ext4"), staged.path("disk.ext4")); err != nil {
+		os.RemoveAll(staged.Dir)
+		return fmt.Errorf("copying the base image: %w", err)
+	}
+	if err := writeIdentity(staged); err != nil {
+		os.RemoveAll(staged.Dir)
+		return err
+	}
+	if err := os.Rename(staged.Dir, b.Dir); err != nil {
+		os.RemoveAll(staged.Dir)
 		if errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("box %s already exists", b.Name)
 		}
 		return err
 	}
-	if err := clone(filepath.Join(Home(), "image", "rootfs.ext4"), b.path("disk.ext4")); err != nil {
-		os.RemoveAll(b.Dir)
-		return fmt.Errorf("copying the base image: %w", err)
-	}
-	if err := writeIdentity(b); err != nil {
-		os.RemoveAll(b.Dir)
-		return err
-	}
-	return b.writeVMConfig()
+	return nil
 }
 
 // HostKey returns the box's SSH host public key, in authorized_keys format.
@@ -110,17 +123,18 @@ func (b Box) Stop() error {
 	if !b.Running() {
 		return nil
 	}
-	pid, err := b.pid()
+	pid, err := readPid(b.path("pid"))
 	if err != nil {
 		return err
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
-		return nil
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("stopping box %s: %w", b.Name, err)
 	}
 	return waitGone(pid)
 }
 
-// Remove stops the box and deletes it.
+// Remove stops the box, and any VM a dead supervisor left running on its
+// disk, then deletes it.
 func (b Box) Remove() error {
 	if !b.Exists() {
 		return fmt.Errorf("no box %s", b.Name)
@@ -128,7 +142,34 @@ func (b Box) Remove() error {
 	if err := b.Stop(); err != nil {
 		return err
 	}
+	if err := b.killOrphanVM(); err != nil {
+		return err
+	}
 	return os.RemoveAll(b.Dir)
+}
+
+// killOrphanVM kills a VM whose supervisor died without taking it along. On
+// macOS nothing kills vfkit with its parent, and a second VM on the same disk
+// fails ("storage device attachment is invalid") or worse. The supervisor
+// records the VM's pid in vm.pid; it's trusted only while that pid is still
+// running a VMM, since pids get reused.
+func (b Box) killOrphanVM() error {
+	pid, err := readPid(b.path("vm.pid"))
+	if err != nil {
+		return nil
+	}
+	defer os.Remove(b.path("vm.pid"))
+	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return nil // not running
+	}
+	if name := filepath.Base(strings.TrimSpace(string(out))); name != "vfkit" && name != "firecracker" {
+		return nil
+	}
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("killing box %s's orphaned VM %d: %w", b.Name, pid, err)
+	}
+	return waitGone(pid)
 }
 
 // List returns the boxes that exist, in name order.
@@ -152,8 +193,8 @@ func (b Box) path(name string) string { return filepath.Join(b.Dir, name) }
 // VMMs use the same names: Firecracker requires them, and vfkit is told them.
 func (b Box) hostSocket(port uint32) string { return b.path(fmt.Sprintf("v.sock_%d", port)) }
 
-func (b Box) pid() (int, error) {
-	raw, err := os.ReadFile(b.path("pid"))
+func readPid(path string) (int, error) {
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}

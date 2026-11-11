@@ -15,7 +15,8 @@ import (
 // Virtualization.framework gives the guest no clock, so it follows the host's
 // over vsock (see the clock package).
 //
-// Unlike Firecracker on Linux, nothing kills vfkit if its supervisor dies.
+// Unlike Firecracker on Linux, nothing kills vfkit if its supervisor dies;
+// the next up or rm kills the orphan (see killOrphanVM).
 
 const hallpassDir = "/var/db/hallpass/run"
 
@@ -34,7 +35,7 @@ func (b Box) vmCommand(ports []uint32) (*exec.Cmd, error) {
 		"--bootloader", fmt.Sprintf("linux,kernel=%s,initrd=%s,cmdline=console=hvc0 root=/dev/vda rw init=/lib/systemd/systemd",
 			filepath.Join(image, "Image"), filepath.Join(image, "initrd.cpio")),
 		"--device", "virtio-blk,path=" + b.path("disk.ext4"),
-		"--device", "virtio-blk,path=" + b.path("identity.tar"),
+		"--device", "virtio-blk,path=" + b.path("identity.tar") + ",readonly",
 		"--device", "virtio-rng",
 		"--device", "virtio-serial,logFilePath=" + b.path("console.log"),
 		"--device", "virtio-vsock,port=22,socketURL=" + b.path("v.sock") + ",connect",
