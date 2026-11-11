@@ -16,9 +16,8 @@ import (
 // a second disk, holding its hostname, a freshly generated SSH host key, and
 // the keys that may log in (Home()/authorized_keys, so the image carries no
 // one's keys). The guest's punchclock-identity unit unpacks it before sshd
-// starts. A tar
-// needs no filesystem tools on the host, and its 512-byte records are whole
-// disk sectors. The public key is also kept beside it, for known_hosts.
+// starts. A tar needs no filesystem tools on the host, and its 512-byte
+// records are whole disk sectors. The public key is also kept beside it, for known_hosts.
 func writeIdentity(b Box) error {
 	authorized, err := os.ReadFile(filepath.Join(Home(), "authorized_keys"))
 	if err != nil {

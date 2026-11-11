@@ -3,7 +3,7 @@
 # context. Nothing in it is per box: a box's hostname, host key, and
 # authorized_keys come from its identity drive at boot.
 FROM ubuntu:24.04
-ARG USER UID
+ARG USER UID TARGETARCH
 
 RUN userdel -r ubuntu && \
     apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -11,6 +11,14 @@ RUN userdel -r ubuntu && \
       git gh rsync socat curl ca-certificates sudo iproute2 dnsutils netcat-openbsd \
       nodejs npm python3-venv build-essential jq strace less \
     && rm -rf /var/lib/apt/lists/*
+
+# A Mac boots the box with Ubuntu's own arm64 kernel, which build.sh takes
+# from /boot; vsock is a module there, loaded without udev. Firecracker boots
+# its own kernel, with vsock built in.
+RUN if [ "$TARGETARCH" = arm64 ]; then \
+      apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends linux-image-virtual && \
+      rm -rf /var/lib/apt/lists/* && echo vmw_vsock_virtio_transport > /etc/modules-load.d/vsock.conf; \
+    fi
 
 # The user matches the build machine's, so ferry maps homes one to one.
 # ~/.local/bin goes on PATH in /etc/environment, which every ssh session reads,
@@ -60,11 +68,12 @@ COPY punchclock punchclock-identity /usr/local/bin/
 COPY units/ /etc/systemd/system/
 RUN rm -f /etc/ssh/ssh_host_* && \
     printf 'HostKey /etc/ssh/ssh_host_ed25519_key\nPasswordAuthentication no\n' > /etc/ssh/sshd_config.d/punchclock.conf && \
-    systemctl enable ssh.service punchclock-identity.service punchclock-ssh.service punchclock-proxy.service \
+    systemctl enable ssh.service punchclock-identity.service punchclock-ready.service punchclock-clock.service \
+      punchclock-ssh.service punchclock-proxy.service \
       punchclock-model.service punchclock-hallpass@hallpass.service punchclock-hallpass@gh.service \
       punchclock-hallpass@ssh.service punchclock-hallpass@git.service && \
-    systemctl mask systemd-networkd-wait-online.service systemd-resolved.service serial-getty@ttyS0.service && \
-    : > /etc/resolv.conf && printf '/dev/vda / ext4 rw,relatime 0 1\n' > /etc/fstab && passwd -d root >/dev/null
+    systemctl mask systemd-networkd-wait-online.service systemd-resolved.service serial-getty@ttyS0.service serial-getty@hvc0.service && \
+    printf '/dev/vda / ext4 rw,relatime 0 1\n' > /etc/fstab && passwd -d root >/dev/null
 
 # Everything reaches the internet through the proxy, including sudo, apt, and
 # Docker. npm sets its own GIT_SSH_COMMAND, so it's pinned to hallpass here.

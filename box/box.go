@@ -1,10 +1,12 @@
-// Package box creates, runs, and removes boxes: throwaway Firecracker VMs with
-// no network device. Everything a box can reach, it reaches over vsock, through
-// listeners its supervisor runs on the host:
+// Package box creates, runs, and removes boxes: throwaway VMs with no network
+// device, Firecracker on Linux and vfkit on macOS. Everything a box can reach,
+// it reaches over vsock, through listeners its supervisor runs on the host:
 //
-//	guest port 22    host -> guest ssh
-//	host port 3128   the egress proxy
-//	host port 8787   the model endpoint
+//	guest port 22         host -> guest ssh
+//	host port 9           the guest says it's ready
+//	host port 123         the host's time
+//	host port 3128        the egress proxy
+//	host port 8787        the model endpoint
 //	host ports 5001-5004  hallpass's hallpass, gh, ssh, and git sockets
 //
 // Each box lives in one directory under Home()/boxes: its disk (a reflink copy
@@ -77,7 +79,7 @@ func (b Box) Create() error {
 		os.RemoveAll(b.Dir)
 		return err
 	}
-	return writeFirecrackerConfig(b)
+	return b.writeVMConfig()
 }
 
 // HostKey returns the box's SSH host public key, in authorized_keys format.
@@ -145,6 +147,10 @@ func List() ([]Box, error) {
 }
 
 func (b Box) path(name string) string { return filepath.Join(b.Dir, name) }
+
+// hostSocket is where the host serves a port the guest connects out to. Both
+// VMMs use the same names: Firecracker requires them, and vfkit is told them.
+func (b Box) hostSocket(port uint32) string { return b.path(fmt.Sprintf("v.sock_%d", port)) }
 
 func (b Box) pid() (int, error) {
 	raw, err := os.ReadFile(b.path("pid"))

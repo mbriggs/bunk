@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mbriggs/punchclock/box"
+	"github.com/mbriggs/punchclock/clock"
 	"github.com/mbriggs/punchclock/relay"
 )
 
@@ -28,7 +29,8 @@ const usage = `usage:
   punchclock proxy NAME    connect stdin and stdout to the box's sshd (an ssh ProxyCommand)
 
 inside a box:
-  punchclock guest relay LISTEN_PATH VSOCK_PORT`
+  punchclock guest relay LISTEN_PATH VSOCK_PORT
+  punchclock guest clock VSOCK_PORT`
 
 func main() {
 	log.SetFlags(0)
@@ -60,6 +62,12 @@ func run(args []string) error {
 		return supervise(rest[0])
 	case cmd == "guest" && len(rest) == 3 && rest[0] == "relay":
 		return guestRelay(rest[1], rest[2])
+	case cmd == "guest" && len(rest) == 2 && rest[0] == "clock":
+		p, err := strconv.ParseUint(rest[1], 10, 32)
+		if err != nil {
+			return err
+		}
+		clock.Follow(uint32(p))
 	}
 	fmt.Fprintln(os.Stderr, usage)
 	os.Exit(2)
@@ -92,13 +100,13 @@ func up(name string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	ready := make(chan error, 1)
-	go func() { ready <- b.WaitSSH(ctx) }()
+	go func() { ready <- b.WaitReady(ctx) }()
 	select {
 	case err := <-exited:
 		return fmt.Errorf("box %s: supervisor exited (%v); see %s/supervisor.log", name, err, b.Dir)
 	case err := <-ready:
 		if err != nil {
-			return fmt.Errorf("%w; see %s/console.log, and punchclock rm %s", err, b.Dir, name)
+			return fmt.Errorf("%w; see %s/vm.log, and punchclock rm %s", err, b.Dir, name)
 		}
 	}
 	key, err := b.HostKey()

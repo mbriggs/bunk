@@ -1,0 +1,11 @@
+[Unit]
+Description=Follow the host's clock over vsock (a Mac box has no RTC)
+DefaultDependencies=no
+After=systemd-modules-load.service
+Before=sysinit.target time-set.target
+Wants=time-set.target
+[Service]
+ExecStart=/usr/local/bin/punchclock guest clock 123
+Restart=always
+[Install]
+WantedBy=sysinit.target

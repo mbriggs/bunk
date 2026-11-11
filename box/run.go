@@ -8,23 +8,58 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/mbriggs/punchclock/clock"
 	"github.com/mbriggs/punchclock/egress"
 	"github.com/mbriggs/punchclock/modelproxy"
 	"github.com/mbriggs/punchclock/relay"
 )
 
-// hallpassPorts are the vsock ports that carry hallpass's sockets. Boxes
-// share the build machine user's hallpass, so the broker sees this user's uid.
+// Every box gets the same machine: Firecracker and vfkit only touch the
+// memory a guest uses, so the ceiling costs nothing until a task needs it.
+const (
+	cpus      = 4
+	memoryMiB = 8192
+)
+
+// The vsock ports a box's guest connects out to.
+const (
+	portReady = 9    // the guest connects once sshd is up
+	portClock = 123  // the host's time
+	portProxy = 3128 // the egress proxy
+	portModel = 8787 // the model endpoint
+)
+
+// hallpassPorts carry hallpass's sockets. Boxes share the build machine
+// user's hallpass, so the broker sees this user's uid.
 var hallpassPorts = map[string]uint32{"hallpass": 5001, "gh": 5002, "ssh": 5003, "git": 5004}
 
-const hallpassDir = "/run/hallpass"
+// channel is one port the guest connects out to, and what serves it.
+type channel struct {
+	port  uint32
+	serve func(net.Listener) error
+}
+
+func (b Box) channels() []channel {
+	model := modelproxy.Handler(credentials())
+	policy := egress.Policy{AllowFile: filepath.Join(Home(), "allow.txt"), ModeFile: filepath.Join(Home(), "mode")}
+	cs := []channel{
+		{portReady, b.serveReady},
+		{portClock, clock.Serve},
+		{portProxy, func(ln net.Listener) error { return egress.Serve(ln, policy) }},
+		{portModel, func(ln net.Listener) error { return http.Serve(ln, model) }},
+	}
+	for name, port := range hallpassPorts {
+		target := filepath.Join(hallpassDir, name+".sock")
+		cs = append(cs, channel{port, func(ln net.Listener) error { return relay.Host(ln, target) }})
+	}
+	return cs
+}
 
 // Run is the box's supervisor: it serves the host side of every vsock channel
 // and runs the VM until the VM exits or ctx is cancelled. A box has at most
@@ -41,71 +76,47 @@ func (b Box) Run(ctx context.Context) error {
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return fmt.Errorf("box %s is already running", b.Name)
 	}
-	fc, err := firecracker()
-	if err != nil {
-		return err
-	}
 	if err := os.WriteFile(b.path("pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
 		return err
 	}
 	defer os.Remove(b.path("pid"))
-	b.removeSockets()
-	defer b.removeSockets()
+	b.clearRunState()
+	defer b.clearRunState()
 
-	listen := func(port uint32) (net.Listener, error) {
-		return net.Listen("unix", b.path(fmt.Sprintf("v.sock_%d", port)))
-	}
-	var lns []net.Listener
-	defer func() {
-		for _, ln := range lns {
-			ln.Close()
-		}
-	}()
-	serve := func(port uint32, f func(net.Listener) error) error {
-		ln, err := listen(port)
+	var ports []uint32
+	for _, c := range b.channels() {
+		ln, err := net.Listen("unix", b.hostSocket(c.port))
 		if err != nil {
 			return err
 		}
-		lns = append(lns, ln)
+		defer ln.Close()
 		go func() {
-			if err := f(ln); err != nil && !errors.Is(err, net.ErrClosed) {
-				log.Printf("port %d: %v", port, err)
+			if err := c.serve(ln); err != nil && !errors.Is(err, net.ErrClosed) {
+				log.Printf("port %d: %v", c.port, err)
 			}
 		}()
-		return nil
-	}
-	model := modelproxy.Handler(credentials())
-	policy := egress.Policy{AllowFile: filepath.Join(Home(), "allow.txt"), ModeFile: filepath.Join(Home(), "mode")}
-	if err := serve(8787, func(ln net.Listener) error { return http.Serve(ln, model) }); err != nil {
-		return err
-	}
-	if err := serve(3128, func(ln net.Listener) error { return egress.Serve(ln, policy) }); err != nil {
-		return err
-	}
-	for name, port := range hallpassPorts {
-		target := filepath.Join(hallpassDir, name+".sock")
-		if err := serve(port, func(ln net.Listener) error { return relay.Host(ln, target) }); err != nil {
-			return err
-		}
+		ports = append(ports, c.port)
 	}
 
-	console, err := os.OpenFile(b.path("console.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	cmd, err := b.vmCommand(ports)
+	if err != nil {
+		return err
+	}
+	console, err := os.OpenFile(b.path("vm.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	defer console.Close()
-	cmd := exec.Command(fc, "--no-api", "--config-file", b.path("config.json"))
 	cmd.Stdout, cmd.Stderr = console, console
-	cmd.SysProcAttr = vmProcAttr()
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	log.Printf("box %s: firecracker pid %d", b.Name, cmd.Process.Pid)
+	log.Printf("box %s: VM pid %d", b.Name, cmd.Process.Pid)
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
 	select {
 	case err := <-exited:
-		return fmt.Errorf("firecracker exited: %v", err)
+		return fmt.Errorf("the VM exited: %v", err)
 	case <-ctx.Done():
 		cmd.Process.Signal(syscall.SIGTERM)
 		select {
@@ -119,7 +130,39 @@ func (b Box) Run(ctx context.Context) error {
 	}
 }
 
-func (b Box) removeSockets() {
+// serveReady marks the box ready when the guest connects, which it does once
+// sshd is up. Dialing the guest's sshd to find out instead can wedge vfkit's
+// forwarder if it comes too early.
+func (b Box) serveReady(ln net.Listener) error {
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return err
+		}
+		c.Close()
+		if err := os.WriteFile(b.path("ready"), nil, 0o600); err != nil {
+			return err
+		}
+	}
+}
+
+// WaitReady waits until the guest has said it's ready.
+func (b Box) WaitReady(ctx context.Context) error {
+	for {
+		if _, err := os.Stat(b.path("ready")); err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("box %s didn't come up: %w", b.Name, ctx.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// clearRunState removes what only means something while the VM runs.
+func (b Box) clearRunState() {
+	os.Remove(b.path("ready"))
 	matches, _ := filepath.Glob(b.path("v.sock*"))
 	for _, m := range matches {
 		os.Remove(m)

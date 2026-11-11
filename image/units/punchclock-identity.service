@@ -7,6 +7,10 @@ Before=ssh.service ssh.socket sysinit.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/bin/punchclock-identity
+# A box that can't take its identity can't be logged in to: say why on the
+# console, which punchclock keeps in the box's directory.
+StandardOutput=journal+console
+StandardError=journal+console
 [Install]
 WantedBy=sysinit.target
 RequiredBy=ssh.service

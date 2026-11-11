@@ -1,0 +1,9 @@
+[Unit]
+Description=Tell the host this box is ready, once sshd is up
+After=ssh.service punchclock-ssh.service
+Wants=ssh.service punchclock-ssh.service
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'echo ready | /usr/bin/socat -u - VSOCK-CONNECT:2:9'
+[Install]
+WantedBy=multi-user.target

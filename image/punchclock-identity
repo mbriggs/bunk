@@ -2,9 +2,11 @@
 # Take this box's hostname, SSH host key, and authorized_keys from its
 # identity drive, a raw tar archive on /dev/vdb that punchclock writes when it
 # creates the box.
-set -eu
+set -eux
 user=$(cat /etc/punchclock/user)
-d=$(mktemp -d)
+# Not /tmp: this runs before local-fs.target, and a tmpfs mounted on /tmp
+# partway through would hide what tar is unpacking.
+d=$(mktemp -d /run/punchclock-identity.XXXXXX)
 tar -x -C "$d" -f /dev/vdb
 name=$(cat "$d/hostname")
 hostname "$name"

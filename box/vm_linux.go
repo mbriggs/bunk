@@ -1,8 +1,6 @@
 package box
 
 import (
-	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -10,14 +8,18 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
+	"syscall"
 )
 
-// writeFirecrackerConfig writes the VM's config: the shared kernel, the box's
-// own disk and identity drive, and a vsock device. There is no network
-// interface.
-func writeFirecrackerConfig(b Box) error {
-	image := filepath.Join(Home(), "image")
+// On Linux a box is a Firecracker VM, booted from Home()/image/vmlinux.
+// Firecracker gives each VM one vsock socket, v.sock: the host dials guest
+// ports through it, and a guest connection to port P arrives at v.sock_P.
+
+const hallpassDir = "/run/hallpass"
+
+// writeVMConfig writes the VM's config: the kernel, the box's own disk and
+// identity drive, and a vsock device. There is no network interface.
+func (b Box) writeVMConfig() error {
 	type drive struct {
 		ID       string `json:"drive_id"`
 		Path     string `json:"path_on_host"`
@@ -26,16 +28,16 @@ func writeFirecrackerConfig(b Box) error {
 	}
 	cfg := map[string]any{
 		"boot-source": map[string]any{
-			"kernel_image_path": filepath.Join(image, "vmlinux"),
+			"kernel_image_path": filepath.Join(Home(), "image", "vmlinux"),
 			"boot_args":         "console=ttyS0 reboot=k panic=1 root=/dev/vda rw init=/lib/systemd/systemd systemd.unified_cgroup_hierarchy=1",
 		},
 		"drives": []drive{
 			{ID: "root", Path: b.path("disk.ext4"), Root: true},
 			{ID: "identity", Path: b.path("identity.tar"), ReadOnly: true},
 		},
-		"machine-config": map[string]any{"vcpu_count": 4, "mem_size_mib": 8192},
-		// Each VM has its own vsock device behind its own socket, so every box
-		// can use the same guest CID.
+		"machine-config": map[string]any{"vcpu_count": cpus, "mem_size_mib": memoryMiB},
+		// Each VM has its own vsock device behind its own socket, so every
+		// box can use the same guest CID.
 		"vsock": map[string]any{"guest_cid": 3, "uds_path": b.path("v.sock")},
 	}
 	raw, err := json.MarshalIndent(cfg, "", "  ")
@@ -45,17 +47,23 @@ func writeFirecrackerConfig(b Box) error {
 	return os.WriteFile(b.path("config.json"), raw, 0o600)
 }
 
-// firecracker finds the binary: Home()/bin/firecracker, then $PATH.
-func firecracker() (string, error) {
-	p := filepath.Join(Home(), "bin", "firecracker")
-	if _, err := os.Stat(p); err == nil {
-		return p, nil
+// vmCommand returns the command that runs the VM. Firecracker forwards every
+// guest port, so ports isn't needed. The VM gets SIGKILL if its supervisor
+// dies, so it can't run on with nothing serving its channels.
+func (b Box) vmCommand(ports []uint32) (*exec.Cmd, error) {
+	fc := filepath.Join(Home(), "bin", "firecracker")
+	if _, err := os.Stat(fc); err != nil {
+		if fc, err = exec.LookPath("firecracker"); err != nil {
+			return nil, err
+		}
 	}
-	return exec.LookPath("firecracker")
+	cmd := exec.Command(fc, "--no-api", "--config-file", b.path("config.json"))
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+	return cmd, nil
 }
 
-// DialGuest connects to a port the guest listens on, through Firecracker's
-// vsock socket: send "CONNECT port", read "OK hostport".
+// DialGuest connects to a port the guest listens on: send "CONNECT port" on
+// v.sock, read "OK hostport".
 func (b Box) DialGuest(port uint32) (net.Conn, error) {
 	c, err := net.Dial("unix", b.path("v.sock"))
 	if err != nil {
@@ -80,29 +88,4 @@ func (b Box) DialGuest(port uint32) (net.Conn, error) {
 		return nil, fmt.Errorf("guest port %d: %q", port, line)
 	}
 	return c, nil
-}
-
-// WaitSSH waits until the guest's sshd sends its banner.
-func (b Box) WaitSSH(ctx context.Context) error {
-	for {
-		if b.sshAnswers() {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("box %s: sshd didn't answer: %w", b.Name, ctx.Err())
-		case <-time.After(200 * time.Millisecond):
-		}
-	}
-}
-
-func (b Box) sshAnswers() bool {
-	c, err := b.DialGuest(22)
-	if err != nil {
-		return false
-	}
-	defer c.Close()
-	c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	banner, _ := bufio.NewReader(c).ReadString('\n')
-	return strings.HasPrefix(banner, "SSH-")
 }
