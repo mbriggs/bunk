@@ -1,0 +1,33 @@
+# E3 allowlist, from the open-mode census (2026-11-11). A leading dot matches subdomains.
+# npm, node
+registry.npmjs.org
+nodejs.org
+# python
+pypi.org
+files.pythonhosted.org
+# go
+go.dev
+dl.google.com
+proxy.golang.org
+sum.golang.org
+# rust
+sh.rustup.rs
+static.rust-lang.org
+index.crates.io
+static.crates.io
+# ubuntu (plain http)
+archive.ubuntu.com
+security.ubuntu.com
+# playwright browsers
+cdn.playwright.dev
+playwright.download.prss.microsoft.com
+# prisma engines
+binaries.prisma.sh
+# left out on purpose: storage.googleapis.com (shared, writable), checkpoint.prisma.io (telemetry), *.prisma.build (per-run names)
+# Playwright Chrome for Testing. Shared, writable by anyone with a bucket: an exfil channel.
+storage.googleapis.com
+# docker hub
+registry-1.docker.io
+auth.docker.io
+production.cloudflare.docker.com
+production.cloudfront.docker.com

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Take this box's hostname and SSH host key from its identity drive, a raw tar
+# archive on /dev/vdb that punchclock writes when it creates the box.
+set -eu
+d=$(mktemp -d)
+tar -x -C "$d" -f /dev/vdb
+name=$(cat "$d/hostname")
+hostname "$name"
+echo "$name" > /etc/hostname
+sed -i "s/^127\.0\.1\.1[[:space:]].*/127.0.1.1 $name/" /etc/hosts
+install -o root -g root -m 600 "$d/ssh_host_ed25519_key" /etc/ssh/ssh_host_ed25519_key
+install -o root -g root -m 644 "$d/ssh_host_ed25519_key.pub" /etc/ssh/ssh_host_ed25519_key.pub
+rm -rf "$d"

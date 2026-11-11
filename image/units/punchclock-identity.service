@@ -1,0 +1,12 @@
+[Unit]
+Description=Take this box's hostname and SSH host key from its identity drive
+DefaultDependencies=no
+After=local-fs.target
+Before=ssh.service ssh.socket sysinit.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/punchclock-identity
+[Install]
+WantedBy=sysinit.target
+RequiredBy=ssh.service
