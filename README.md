@@ -64,12 +64,12 @@ Host *.kant.box
   User mbriggs
   IdentityFile ~/.ssh/box_key
   IdentitiesOnly yes
-  UserKnownHostsFile ~/.ssh/known_hosts_punchclock
+  UserKnownHostsFile ~/.ssh/punchclock/%h
   StrictHostKeyChecking yes
   ProxyCommand ssh mbriggs@kant .local/bin/punchclock proxy %h
 ```
 
-For a box on the laptop itself, run punchclock directly: `ProxyCommand ~/.local/share/punchclock/bin/punchclock proxy %h`. ferry pins each box's host key in `known_hosts_punchclock` when it makes the box, so `StrictHostKeyChecking yes` never asks.
+For a box on the laptop itself, run punchclock directly: `ProxyCommand ~/.local/share/punchclock/bin/punchclock proxy %h`. ferry pins each box's host key in a file of its own, `~/.ssh/punchclock/NAME.HOST.box`, when it makes the box, so `StrictHostKeyChecking yes` never asks and parallel handoffs never share a file. ferry refuses a block whose `UserKnownHostsFile` doesn't end in `%h`.
 
 ## Use it
 
@@ -79,10 +79,10 @@ To hand the current task to a fresh box on kant, run this in its worktree:
 ferry to kant --sandbox
 ```
 
-ferry runs `punchclock up` on kant to make a box named after the task (the worktree's name), moves the worktree and the Claude session in, and resumes Claude there in Rex. To bring back a task named fix-auth and delete its box:
+ferry runs `punchclock up` on kant to make a box named after the task: the worktree's name plus a short hash of its path, like `fix-auth-3f9c2a`. It moves the worktree and the Claude session in, and resumes Claude there in Rex. ferry prints the box's ssh name. To bring the task back and delete its box:
 
 ```sh
-ferry from fix-auth.kant.box
+ferry from fix-auth-3f9c2a.kant.box
 ```
 
 To start new tasks in parallel, make a worktree for each and start Claude in a box with a prompt:
@@ -93,7 +93,7 @@ cd .claude/worktrees/fix-login
 ferry to kant --sandbox --prompt "Fix the login redirect and commit it."
 ```
 
-`ferry from fix-login.kant.box` brings back the branch and the session Claude made.
+`ferry from fix-login-HASH.kant.box`, with the name ferry printed, brings back the branch and the session Claude made.
 
 On the build machine, `punchclock ls` lists boxes and `punchclock rm NAME` deletes one. `punchclock up NAME` makes a box, or starts it again if it exists.
 
