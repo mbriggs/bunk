@@ -1,4 +1,4 @@
-# E3 allowlist, from the open-mode census (2026-11-11). A leading dot matches subdomains.
+# The default allowlist: what the census of real workloads (npm, pip, Go, Rust, apt, Playwright, Prisma, Docker) needed. A leading dot matches subdomains; a leading ~ is a regexp matched against the whole name.
 # npm, node
 registry.npmjs.org
 nodejs.org
@@ -31,3 +31,5 @@ registry-1.docker.io
 auth.docker.io
 production.cloudflare.docker.com
 production.cloudfront.docker.com
+# ubuntu arm64 (a Mac box)
+ports.ubuntu.com
