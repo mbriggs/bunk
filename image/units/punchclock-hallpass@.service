@@ -1,5 +1,5 @@
 [Unit]
-Description=hallpass %i.sock, carried to the host over vsock with in-band end of input
+Description=hallpass %i.sock, relayed to the host's hallpass over vsock
 [Service]
 RuntimeDirectory=hallpass
 RuntimeDirectoryPreserve=yes

@@ -88,6 +88,7 @@ func (b Box) Run(ctx context.Context) error {
 	defer console.Close()
 	cmd := exec.Command(fc, "--no-api", "--config-file", b.path("config.json"))
 	cmd.Stdout, cmd.Stderr = console, console
+	cmd.SysProcAttr = vmProcAttr()
 	if err := cmd.Start(); err != nil {
 		return err
 	}

@@ -5,17 +5,25 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"fmt"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/crypto/ssh"
 )
 
 // writeIdentity makes the box's identity drive: a raw tar archive, attached as
-// a second disk, holding its hostname and a freshly generated SSH host key.
-// The guest's punchclock-identity unit unpacks it before sshd starts. A tar
+// a second disk, holding its hostname, a freshly generated SSH host key, and
+// the keys that may log in (Home()/authorized_keys, so the image carries no
+// one's keys). The guest's punchclock-identity unit unpacks it before sshd
+// starts. A tar
 // needs no filesystem tools on the host, and its 512-byte records are whole
 // disk sectors. The public key is also kept beside it, for known_hosts.
 func writeIdentity(b Box) error {
+	authorized, err := os.ReadFile(filepath.Join(Home(), "authorized_keys"))
+	if err != nil {
+		return fmt.Errorf("the keys that may log in to boxes: %w", err)
+	}
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return err
@@ -44,6 +52,7 @@ func writeIdentity(b Box) error {
 		{"hostname", 0o644, []byte(b.Name + "\n")},
 		{"ssh_host_ed25519_key", 0o600, pem.EncodeToMemory(block)},
 		{"ssh_host_ed25519_key.pub", 0o644, pubLine},
+		{"authorized_keys", 0o600, authorized},
 	} {
 		if err := tw.WriteHeader(&tar.Header{Name: file.name, Mode: file.mode, Size: int64(len(file.data))}); err != nil {
 			return err

@@ -1,0 +1,7 @@
+[Unit]
+Description=The host's model endpoint at 127.0.0.1:8787, over vsock
+[Service]
+ExecStart=/usr/bin/socat TCP-LISTEN:8787,bind=127.0.0.1,fork,reuseaddr VSOCK-CONNECT:2:8787
+Restart=always
+[Install]
+WantedBy=multi-user.target

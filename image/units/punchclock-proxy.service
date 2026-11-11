@@ -1,0 +1,7 @@
+[Unit]
+Description=The host's egress proxy at 127.0.0.1:3128, over vsock
+[Service]
+ExecStart=/usr/bin/socat TCP-LISTEN:3128,bind=127.0.0.1,fork,reuseaddr VSOCK-CONNECT:2:3128
+Restart=always
+[Install]
+WantedBy=multi-user.target

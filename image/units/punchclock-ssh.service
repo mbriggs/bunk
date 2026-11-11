@@ -1,0 +1,8 @@
+[Unit]
+Description=sshd on vsock port 22, for punchclock proxy on the host
+After=ssh.service
+[Service]
+ExecStart=/usr/bin/socat VSOCK-LISTEN:22,fork,reuseaddr TCP:127.0.0.1:22
+Restart=always
+[Install]
+WantedBy=multi-user.target

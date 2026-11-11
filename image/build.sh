@@ -1,14 +1,30 @@
 #!/bin/sh
-# build.sh: build the box image and export it to $PUNCHCLOCK_HOME/image/rootfs.ext4.
-# Run on the build machine from this directory, with linux binaries of
-# punchclock and ferry at ./punchclock and ./ferry. podman owns /etc/hosts and /etc/hostname at build time, so
-# they're written here; each box renames itself at boot.
+# build.sh: build the box image from scratch and export it to
+# $PUNCHCLOCK_HOME/image/rootfs.ext4, on a Linux build machine.
+#
+# The context is this directory plus what boxes take from the build machine:
+# the punchclock and ferry it runs (ferry push keeps ferry in step with the
+# laptop), and hallpass's client binary and config, since boxes share its
+# broker. Claude, Codex, and Rex install fresh, so rebuilding picks up new
+# versions. podman owns /etc/hosts and /etc/hostname at build time, so they're
+# written at export; each box renames itself at boot.
 set -eu
+here=$(cd "$(dirname "$0")" && pwd)
 home=${PUNCHCLOCK_HOME:-$HOME/.local/share/punchclock}
-mkdir -p "$home/image"
-podman build -q -t localhost/punchclock-box:amd64 . >/dev/null
+ctx=$(mktemp -d)
+trap 'rm -rf "$ctx"' EXIT
+cp -R "$here/Containerfile" "$here/units" "$here/claude-settings.json" "$here/punchclock-identity" "$ctx/"
+cp "${PUNCHCLOCK:-$HOME/.local/bin/punchclock}" "$ctx/punchclock"
+cp "${FERRY:-$HOME/.local/bin/ferry}" "$ctx/ferry"
+cp /opt/hallpass/bin/hallpass "$ctx/hallpass"
+mkdir "$ctx/hallpass-etc"
+cp -R /etc/hallpass/gitconfig /etc/hallpass/allowed_signers /etc/hallpass/signing.pub /etc/hallpass/gh "$ctx/hallpass-etc/"
+sed -i 's|^http_unix_socket:.*|http_unix_socket: /run/hallpass/gh.sock|' "$ctx/hallpass-etc/gh/config.yml"
+
+podman build --pull=newer --build-arg USER="$(id -un)" --build-arg UID="$(id -u)" -t localhost/punchclock-box "$ctx"
 podman rm -f punchclock-root >/dev/null 2>&1 || true
-podman create --name punchclock-root localhost/punchclock-box:amd64 >/dev/null
+podman create --name punchclock-root localhost/punchclock-box >/dev/null
+mkdir -p "$home/image"
 out="$home/image/rootfs.ext4.new"
 podman unshare sh -c '
   m=$(podman mount punchclock-root)

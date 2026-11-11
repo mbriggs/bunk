@@ -1,19 +1,71 @@
-# A box's root filesystem: the spike's Firecracker guest (box-vm:amd64) plus
-# punchclock's guest side. Build and export with build.sh on the build machine.
-FROM localhost/box-vm:amd64
-COPY punchclock /usr/local/bin/punchclock
-COPY punchclock-identity /usr/local/bin/punchclock-identity
+# A box's root filesystem. build.sh builds it from scratch on the build
+# machine and exports it to rootfs.ext4; see there for what goes in the
+# context. Nothing in it is per box: a box's hostname, host key, and
+# authorized_keys come from its identity drive at boot.
+FROM ubuntu:24.04
+ARG USER UID
+
+RUN userdel -r ubuntu && \
+    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      systemd systemd-sysv openssh-server iptables \
+      git gh rsync socat curl ca-certificates sudo iproute2 dnsutils netcat-openbsd \
+      nodejs npm python3-venv build-essential jq strace less \
+    && rm -rf /var/lib/apt/lists/*
+
+# The user matches the build machine's, so ferry maps homes one to one.
+# ~/.local/bin goes on PATH in /etc/environment, which every ssh session reads,
+# not just login shells.
+RUN useradd -m -u "$UID" -s /bin/bash -G sudo "$USER" && \
+    echo "$USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/box-user && \
+    install -d -o "$USER" -g "$USER" -m 700 /home/$USER/.ssh && \
+    install -d -o "$USER" -g "$USER" /home/$USER/.local /home/$USER/.local/bin /home/$USER/.config /home/$USER/.config/ferry /home/$USER/.claude && \
+    mkdir -p /etc/punchclock && echo "$USER" > /etc/punchclock/user && \
+    sed -i "s|^PATH=\"|PATH=\"/home/$USER/.local/bin:|" /etc/environment
+
+# Agents and tools. Rex's tarball install puts one binary in /usr/local/bin.
+RUN curl -fsSL https://pkgs.superlogical.com/rex/install.sh | sh -s -- --tarball && \
+    npm i -g @openai/codex
+USER $USER
+RUN curl -fsSL https://claude.ai/install.sh | bash
+USER root
+
+# The box is the boundary: Claude runs without permission prompts. Onboarding
+# is marked done so the TUI skips its direct check of api.anthropic.com, and
+# the auto-mode nudge is marked seen so it doesn't wait on an answer.
+COPY --chown=$UID:$UID claude-settings.json /home/$USER/.claude/settings.json
+RUN v=$(su - "$USER" -c 'claude --version' | cut -d' ' -f1) && \
+    su "$USER" -c "printf '{\"hasCompletedOnboarding\":true,\"lastOnboardingVersion\":\"%s\",\"hasSeenAutoDefaultNudge\":true}\n' $v > /home/$USER/.claude.json"
+
+# hallpass's client side, from the build machine: boxes share its broker.
+COPY hallpass /opt/hallpass/bin/hallpass
+COPY hallpass-etc/ /etc/hallpass/
+RUN ln -s hallpass /opt/hallpass/bin/hallpass-sign && \
+    git config --system include.path /etc/hallpass/gitconfig
+
+# ferry, from the build machine, so it speaks the laptop's protocol; the
+# sandbox marker makes it answer agents' folder-trust prompts.
+COPY --chown=$UID:$UID ferry /home/$USER/.local/bin/ferry
+RUN touch /home/$USER/.config/ferry/sandbox && chown $UID:$UID /home/$USER/.config/ferry/sandbox
+
+# punchclock's guest side: identity at boot, then every channel over vsock.
+# There is no network device; the host is vsock CID 2.
+COPY punchclock punchclock-identity /usr/local/bin/
 COPY units/ /etc/systemd/system/
-# The box is the boundary: Claude runs without permission prompts, and ferry
-# answers the folder-trust prompt for whatever task it hands in (the sandbox
-# marker). ferry is copied from a ferry checkout's dist/ at build time, so it
-# speaks the same protocol as the laptop's.
-COPY --chown=1000:1000 claude-settings.json /home/mbriggs/.claude/settings.json
-COPY --chown=1000:1000 ferry /home/mbriggs/.local/bin/ferry
-# Each box gets its own host key from its identity drive; none ship in the image.
-RUN rm -f /etc/ssh/ssh_host_* /usr/local/bin/vsockrelay && \
-    printf 'HostKey /etc/ssh/ssh_host_ed25519_key\n' > /etc/ssh/sshd_config.d/punchclock.conf && \
-    chmod 755 /usr/local/bin/punchclock /usr/local/bin/punchclock-identity /home/mbriggs/.local/bin/ferry && \
-    install -d -o 1000 -g 1000 /home/mbriggs/.config/ferry && \
-    install -o 1000 -g 1000 -m 644 /dev/null /home/mbriggs/.config/ferry/sandbox && \
-    systemctl enable punchclock-identity.service
+RUN rm -f /etc/ssh/ssh_host_* && \
+    printf 'HostKey /etc/ssh/ssh_host_ed25519_key\nPasswordAuthentication no\n' > /etc/ssh/sshd_config.d/punchclock.conf && \
+    systemctl enable ssh.service punchclock-identity.service punchclock-ssh.service punchclock-proxy.service \
+      punchclock-model.service punchclock-hallpass@hallpass.service punchclock-hallpass@gh.service \
+      punchclock-hallpass@ssh.service punchclock-hallpass@git.service && \
+    systemctl mask systemd-networkd-wait-online.service systemd-resolved.service serial-getty@ttyS0.service && \
+    : > /etc/resolv.conf && printf '/dev/vda / ext4 rw,relatime 0 1\n' > /etc/fstab && passwd -d root >/dev/null
+
+# Everything reaches the internet through the proxy, including sudo, apt, and
+# Docker. npm sets its own GIT_SSH_COMMAND, so it's pinned to hallpass here.
+# Docker needs iptables' legacy backend: Firecracker's CI kernel has no nf_tables.
+RUN p=http://127.0.0.1:3128 && \
+    printf "HTTPS_PROXY=$p\nHTTP_PROXY=$p\nhttps_proxy=$p\nhttp_proxy=$p\nNO_PROXY=localhost,127.0.0.1\nno_proxy=localhost,127.0.0.1\nGIT_SSH_COMMAND=/opt/hallpass/bin/hallpass ssh\n" >> /etc/environment && \
+    printf "Acquire::http::Proxy \"$p\";\nAcquire::https::Proxy \"$p\";\n" > /etc/apt/apt.conf.d/90punchclock-proxy && \
+    printf 'Defaults env_keep += "HTTPS_PROXY HTTP_PROXY https_proxy http_proxy NO_PROXY no_proxy GIT_SSH_COMMAND"\n' > /etc/sudoers.d/punchclock-proxy && \
+    mkdir -p /etc/systemd/system/docker.service.d && \
+    printf "[Service]\nEnvironment=HTTPS_PROXY=$p HTTP_PROXY=$p NO_PROXY=localhost,127.0.0.1\n" > /etc/systemd/system/docker.service.d/proxy.conf && \
+    update-alternatives --set iptables /usr/sbin/iptables-legacy && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
