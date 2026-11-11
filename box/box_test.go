@@ -8,10 +8,10 @@ import (
 	"testing"
 )
 
-// testHome makes a punchclock home with a small stand-in image and keys.
+// testHome makes a bunk home with a small stand-in image and keys.
 func testHome(t *testing.T) string {
 	home := t.TempDir()
-	t.Setenv("PUNCHCLOCK_HOME", home)
+	t.Setenv("BUNK_HOME", home)
 	os.MkdirAll(filepath.Join(home, "image"), 0o755)
 	os.WriteFile(filepath.Join(home, "image", "rootfs.ext4"), []byte("not really ext4"), 0o644)
 	os.WriteFile(filepath.Join(home, "authorized_keys"), []byte("ssh-ed25519 AAAA test\n"), 0o644)

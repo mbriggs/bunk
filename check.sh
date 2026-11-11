@@ -1,7 +1,7 @@
 #!/bin/sh
 # check.sh SSH_TARGET: check a running box end to end, from the laptop.
 # Each line is one channel or promise; the exit status is the number that
-# failed. Run it after changing the image, the kernel, or punchclock.
+# failed. Run it after changing the image, the kernel, or bunk.
 #
 #   ./check.sh k1.kant.box
 set -u

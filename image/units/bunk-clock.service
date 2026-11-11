@@ -5,7 +5,7 @@ After=systemd-modules-load.service
 Before=sysinit.target time-set.target
 Wants=time-set.target
 [Service]
-ExecStart=/usr/local/bin/punchclock guest clock 123
+ExecStart=/usr/local/bin/bunk guest clock 123
 Restart=always
 [Install]
 WantedBy=sysinit.target

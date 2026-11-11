@@ -1,6 +1,6 @@
-# punchclock
+# bunk
 
-punchclock runs throwaway sandbox VMs, called boxes, on a build machine: one box per task. A box has no network device. Everything it reaches goes over vsock to its supervisor on the host:
+bunk runs throwaway sandbox VMs, called boxes, on a build machine: one box per task. A box has no network device. Everything it reaches goes over vsock to its supervisor on the host:
 
 - sshd, which ferry and git use to get in.
 - An HTTPS proxy that allows only the names in an allowlist.
@@ -15,26 +15,26 @@ A Linux build machine runs boxes in Firecracker. A Mac runs them in vfkit (Virtu
 
 You need KVM, a home directory on btrfs or xfs (a box's disk is a reflink copy of the image), podman, and hallpass with your uid in its `uids`. Boxes share your hallpass.
 
-1. From this checkout on the laptop, install punchclock on the build machine. The image also takes the build machine's `~/.local/bin/ferry`, which `ferry setup` or `ferry push` installs:
+1. From this checkout on the laptop, install bunk on the build machine. The image also takes the build machine's `~/.local/bin/ferry`, which `ferry setup` or `ferry push` installs:
 
    ```sh
-   GOOS=linux GOARCH=amd64 go build -o punchclock . && scp punchclock HOST:.local/bin/
+   GOOS=linux GOARCH=amd64 go build -o bunk . && scp bunk HOST:.local/bin/
    ```
 
-2. On the build machine, put Firecracker and a guest kernel in punchclock's home, `~/.local/share/punchclock`. Firecracker comes from its GitHub releases. The kernel must have vsock built in; the guest kernels in Firecracker's CI artifacts do:
+2. On the build machine, put Firecracker and a guest kernel in bunk's home, `~/.local/share/bunk`. Firecracker comes from its GitHub releases. The kernel must have vsock built in; the guest kernels in Firecracker's CI artifacts do:
 
    ```sh
-   mkdir -p ~/.local/share/punchclock/bin ~/.local/share/punchclock/image
-   cp firecracker ~/.local/share/punchclock/bin/
-   cp vmlinux ~/.local/share/punchclock/image/
+   mkdir -p ~/.local/share/bunk/bin ~/.local/share/bunk/image
+   cp firecracker ~/.local/share/bunk/bin/
+   cp vmlinux ~/.local/share/bunk/image/
    ```
 
 3. Give boxes the allowlist, the mode, and the public keys that may log in to them. The mode is `allowlist`, or `open` to allow any name but GitHub's. Use the public half of the key the laptop's ssh config names below:
 
    ```sh
-   cp allow.txt ~/.local/share/punchclock/
-   echo allowlist > ~/.local/share/punchclock/mode
-   cat laptop_key.pub > ~/.local/share/punchclock/authorized_keys
+   cp allow.txt ~/.local/share/bunk/
+   echo allowlist > ~/.local/share/bunk/mode
+   cat laptop_key.pub > ~/.local/share/bunk/authorized_keys
    ```
 
 4. Copy `image/` to the build machine, and build the image there. It takes about a minute:
@@ -45,9 +45,9 @@ You need KVM, a home directory on btrfs or xfs (a box's disk is a reflink copy o
 
 ## Set up a Mac build machine
 
-You need vfkit (`brew install vfkit`), Docker (OrbStack works), Go, and checkouts of hallpass in `~/src/hallpass` and ferry in `~/src/ferry`, with `make dist` run in ferry. `build.sh` cross-builds punchclock and hallpass for the box from those checkouts.
+You need vfkit (`brew install vfkit`), Docker (OrbStack works), Go, and checkouts of hallpass in `~/src/hallpass` and ferry in `~/src/ferry`, with `make dist` run in ferry. `build.sh` cross-builds bunk and hallpass for the box from those checkouts.
 
-1. Build punchclock in this checkout (`go build`), and install it in `~/.local/bin` or `~/.local/share/punchclock/bin`. ferry looks in both.
+1. Build bunk in this checkout (`go build`), and install it in `~/.local/bin` or `~/.local/share/bunk/bin`. ferry looks in both.
 2. Give boxes the allowlist, mode, and `authorized_keys`, as in step 3 for Linux.
 3. Build the image from this checkout. On a Mac it also writes the kernel (`Image`) and the empty initrd vfkit requires:
 
@@ -57,19 +57,19 @@ You need vfkit (`brew install vfkit`), Docker (OrbStack works), Go, and checkout
 
 ## Set up the laptop
 
-Add one block per build machine to `~/.ssh/config`. It routes every box on that machine through `punchclock proxy`. Replace the user, the build machine, and the key with yours:
+Add one block per build machine to `~/.ssh/config`. It routes every box on that machine through `bunk proxy`. Replace the user, the build machine, and the key with yours:
 
 ```
 Host *.kant.box
   User mbriggs
   IdentityFile ~/.ssh/box_key
   IdentitiesOnly yes
-  UserKnownHostsFile ~/.ssh/punchclock/%h
+  UserKnownHostsFile ~/.ssh/bunk/%h
   StrictHostKeyChecking yes
-  ProxyCommand ssh mbriggs@kant .local/bin/punchclock proxy %h
+  ProxyCommand ssh mbriggs@kant .local/bin/bunk proxy %h
 ```
 
-For a box on the laptop itself, run punchclock directly: `ProxyCommand ~/.local/share/punchclock/bin/punchclock proxy %h`. ferry pins each box's host key in a file of its own, `~/.ssh/punchclock/NAME.HOST.box`, when it makes the box, so `StrictHostKeyChecking yes` never asks and parallel handoffs never share a file. ferry refuses a block whose `UserKnownHostsFile` doesn't end in `%h`.
+For a box on the laptop itself, run bunk directly: `ProxyCommand ~/.local/share/bunk/bin/bunk proxy %h`. ferry pins each box's host key in a file of its own, `~/.ssh/bunk/NAME.HOST.box`, when it makes the box, so `StrictHostKeyChecking yes` never asks and parallel handoffs never share a file. ferry refuses a block whose `UserKnownHostsFile` doesn't end in `%h`.
 
 ## Use it
 
@@ -79,7 +79,7 @@ To hand the current task to a fresh box on kant, run this in its worktree:
 ferry to kant --sandbox
 ```
 
-ferry runs `punchclock up` on kant to make a box named after the task: the worktree's name plus a short hash of its path, like `fix-auth-3f9c2a`. It moves the worktree and the Claude session in, and resumes Claude there in Rex. ferry prints the box's ssh name. To bring the task back and delete its box:
+ferry runs `bunk up` on kant to make a box named after the task: the worktree's name plus a short hash of its path, like `fix-auth-3f9c2a`. It moves the worktree and the Claude session in, and resumes Claude there in Rex. ferry prints the box's ssh name. To bring the task back and delete its box:
 
 ```sh
 ferry from fix-auth-3f9c2a.kant.box
@@ -95,11 +95,11 @@ ferry to kant --sandbox --prompt "Fix the login redirect and commit it."
 
 `ferry from fix-login-HASH.kant.box`, with the name ferry printed, brings back the branch and the session Claude made.
 
-On the build machine, `punchclock ls` lists boxes and `punchclock rm NAME` deletes one. `punchclock up NAME` makes a box, or starts it again if it exists.
+On the build machine, `bunk ls` lists boxes and `bunk rm NAME` deletes one. `bunk up NAME` makes a box, or starts it again if it exists.
 
 ## Check a box
 
-After changing the image, the kernel, or punchclock, check a running box from the laptop:
+After changing the image, the kernel, or bunk, check a running box from the laptop:
 
 ```sh
 ./check.sh NAME.kant.box
@@ -109,11 +109,11 @@ Each line is one channel: egress, apt, the model endpoint, hallpass, the clock, 
 
 ## Change the allowlist
 
-Edit `~/.local/share/punchclock/allow.txt` on the build machine. The next request reads it. A line is a name, `.domain` for a domain and its subdomains, or `~regexp`, which must match the whole name. Each box's `supervisor.log` lists refused names. GitHub's own names are always refused, because git and gh reach GitHub only through hallpass.
+Edit `~/.local/share/bunk/allow.txt` on the build machine. The next request reads it. A line is a name, `.domain` for a domain and its subdomains, or `~regexp`, which must match the whole name. Each box's `supervisor.log` lists refused names. GitHub's own names are always refused, because git and gh reach GitHub only through hallpass.
 
 ## What's in a box's directory
 
-Each box lives in `~/.local/share/punchclock/boxes/NAME`, which `punchclock rm` deletes:
+Each box lives in `~/.local/share/bunk/boxes/NAME`, which `bunk rm` deletes:
 
 - `disk.ext4`: the box's copy of the image.
 - `identity.tar`: a second disk with the box's hostname, its SSH host key, and `authorized_keys`, unpacked at boot.

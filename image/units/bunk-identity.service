@@ -6,9 +6,9 @@ Before=ssh.service ssh.socket sysinit.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/bin/punchclock-identity
+ExecStart=/usr/local/bin/bunk-identity
 # A box that can't take its identity can't be logged in to: say why on the
-# console, which punchclock keeps in the box's directory.
+# console, which bunk keeps in the box's directory.
 StandardOutput=journal+console
 StandardError=journal+console
 [Install]

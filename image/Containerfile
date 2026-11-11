@@ -27,7 +27,7 @@ RUN useradd -m -u "$UID" -s /bin/bash -G sudo "$USER" && \
     echo "$USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/box-user && \
     install -d -o "$USER" -g "$USER" -m 700 /home/$USER/.ssh && \
     install -d -o "$USER" -g "$USER" /home/$USER/.local /home/$USER/.local/bin /home/$USER/.config /home/$USER/.config/ferry /home/$USER/.claude && \
-    mkdir -p /etc/punchclock && echo "$USER" > /etc/punchclock/user && \
+    mkdir -p /etc/bunk && echo "$USER" > /etc/bunk/user && \
     sed -i "s|^PATH=\"|PATH=\"/home/$USER/.local/bin:|" /etc/environment
 
 # Agents and tools. Rex's tarball install puts one binary in /usr/local/bin.
@@ -48,8 +48,8 @@ RUN v=$(su - "$USER" -c 'claude --version' | cut -d' ' -f1) && \
     su "$USER" -c "printf '{\"hasCompletedOnboarding\":true,\"lastOnboardingVersion\":\"%s\",\"hasSeenAutoDefaultNudge\":true}\n' $v > /home/$USER/.claude.json"
 
 # Commits are made as the build machine's git user.
-COPY user.gitconfig /etc/punchclock/gitconfig
-RUN git config --system --add include.path /etc/punchclock/gitconfig
+COPY user.gitconfig /etc/bunk/gitconfig
+RUN git config --system --add include.path /etc/bunk/gitconfig
 
 # hallpass's client side, from the build machine: boxes share its broker.
 COPY hallpass /opt/hallpass/bin/hallpass
@@ -62,16 +62,16 @@ RUN ln -s hallpass /opt/hallpass/bin/hallpass-sign && \
 COPY --chown=$UID:$UID ferry /home/$USER/.local/bin/ferry
 RUN touch /home/$USER/.config/ferry/sandbox && chown $UID:$UID /home/$USER/.config/ferry/sandbox
 
-# punchclock's guest side: identity at boot, then every channel over vsock.
+# bunk's guest side: identity at boot, then every channel over vsock.
 # There is no network device; the host is vsock CID 2.
-COPY punchclock punchclock-identity /usr/local/bin/
+COPY bunk bunk-identity /usr/local/bin/
 COPY units/ /etc/systemd/system/
 RUN rm -f /etc/ssh/ssh_host_* && \
-    printf 'HostKey /etc/ssh/ssh_host_ed25519_key\nPasswordAuthentication no\n' > /etc/ssh/sshd_config.d/punchclock.conf && \
-    systemctl enable ssh.service punchclock-identity.service punchclock-ready.service punchclock-clock.service \
-      punchclock-ssh.service punchclock-proxy.service \
-      punchclock-model.service punchclock-hallpass@hallpass.service punchclock-hallpass@gh.service \
-      punchclock-hallpass@ssh.service punchclock-hallpass@git.service && \
+    printf 'HostKey /etc/ssh/ssh_host_ed25519_key\nPasswordAuthentication no\n' > /etc/ssh/sshd_config.d/bunk.conf && \
+    systemctl enable ssh.service bunk-identity.service bunk-ready.service bunk-clock.service \
+      bunk-ssh.service bunk-proxy.service \
+      bunk-model.service bunk-hallpass@hallpass.service bunk-hallpass@gh.service \
+      bunk-hallpass@ssh.service bunk-hallpass@git.service && \
     systemctl mask systemd-networkd-wait-online.service systemd-resolved.service serial-getty@ttyS0.service serial-getty@hvc0.service && \
     printf '/dev/vda / ext4 rw,relatime 0 1\n' > /etc/fstab && passwd -d root >/dev/null
 
@@ -80,8 +80,8 @@ RUN rm -f /etc/ssh/ssh_host_* && \
 # Docker needs iptables' legacy backend: Firecracker's CI kernel has no nf_tables.
 RUN p=http://127.0.0.1:3128 && \
     printf "HTTPS_PROXY=$p\nHTTP_PROXY=$p\nhttps_proxy=$p\nhttp_proxy=$p\nNO_PROXY=localhost,127.0.0.1\nno_proxy=localhost,127.0.0.1\nGIT_SSH_COMMAND=/opt/hallpass/bin/hallpass ssh\n" >> /etc/environment && \
-    printf "Acquire::http::Proxy \"$p\";\nAcquire::https::Proxy \"$p\";\n" > /etc/apt/apt.conf.d/90punchclock-proxy && \
-    printf 'Defaults env_keep += "HTTPS_PROXY HTTP_PROXY https_proxy http_proxy NO_PROXY no_proxy GIT_SSH_COMMAND"\n' > /etc/sudoers.d/punchclock-proxy && \
+    printf "Acquire::http::Proxy \"$p\";\nAcquire::https::Proxy \"$p\";\n" > /etc/apt/apt.conf.d/90bunk-proxy && \
+    printf 'Defaults env_keep += "HTTPS_PROXY HTTP_PROXY https_proxy http_proxy NO_PROXY no_proxy GIT_SSH_COMMAND"\n' > /etc/sudoers.d/bunk-proxy && \
     mkdir -p /etc/systemd/system/docker.service.d && \
     printf "[Service]\nEnvironment=HTTPS_PROXY=$p HTTP_PROXY=$p NO_PROXY=localhost,127.0.0.1\n" > /etc/systemd/system/docker.service.d/proxy.conf && \
     update-alternatives --set iptables /usr/sbin/iptables-legacy && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy

@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/mbriggs/punchclock/relay"
+	"github.com/mbriggs/bunk/relay"
 	"golang.org/x/sys/unix"
 )
 

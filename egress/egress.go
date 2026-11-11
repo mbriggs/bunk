@@ -143,7 +143,7 @@ func (p Policy) handle(c net.Conn) {
 
 func refuse(c net.Conn, host, why string) {
 	log.Printf("egress: REFUSED %s: %s", host, why)
-	msg := fmt.Sprintf("punchclock: refused %s (%s)\n", host, why)
+	msg := fmt.Sprintf("bunk: refused %s (%s)\n", host, why)
 	fmt.Fprintf(c, "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(msg), msg)
 }
 

@@ -15,7 +15,7 @@ import (
 // writeIdentity makes the box's identity drive: a raw tar archive, attached as
 // a second disk, holding its hostname, a freshly generated SSH host key, and
 // the keys that may log in (Home()/authorized_keys, so the image carries no
-// one's keys). The guest's punchclock-identity unit unpacks it before sshd
+// one's keys). The guest's bunk-identity unit unpacks it before sshd
 // starts. A tar needs no filesystem tools on the host, and its 512-byte
 // records are whole disk sectors. The public key is also kept beside it, for known_hosts.
 func writeIdentity(b Box) error {
@@ -27,7 +27,7 @@ func writeIdentity(b Box) error {
 	if err != nil {
 		return err
 	}
-	block, err := ssh.MarshalPrivateKey(priv, "punchclock "+b.Name)
+	block, err := ssh.MarshalPrivateKey(priv, "bunk "+b.Name)
 	if err != nil {
 		return err
 	}

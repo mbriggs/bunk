@@ -3,7 +3,7 @@ Description=hallpass %i.sock, relayed to the host's hallpass over vsock
 [Service]
 RuntimeDirectory=hallpass
 RuntimeDirectoryPreserve=yes
-ExecStart=/bin/sh -c "case %i in hallpass) p=5001;; gh) p=5002;; ssh) p=5003;; git) p=5004;; esac; exec /usr/local/bin/punchclock guest relay /run/hallpass/%i.sock $p"
+ExecStart=/bin/sh -c "case %i in hallpass) p=5001;; gh) p=5002;; ssh) p=5003;; git) p=5004;; esac; exec /usr/local/bin/bunk guest relay /run/hallpass/%i.sock $p"
 Restart=always
 [Install]
 WantedBy=multi-user.target

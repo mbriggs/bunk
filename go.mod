@@ -1,4 +1,4 @@
-module github.com/mbriggs/punchclock
+module github.com/mbriggs/bunk
 
 go 1.27.3
 

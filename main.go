@@ -1,4 +1,4 @@
-// punchclock runs throwaway sandbox VMs ("boxes") on a build machine, one per
+// bunk runs throwaway sandbox VMs ("boxes") on a build machine, one per
 // task. A box has no network device: ssh, an allowlisted HTTPS proxy, the
 // model endpoint, and hallpass all reach it over vsock.
 package main
@@ -16,25 +16,25 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mbriggs/punchclock/box"
-	"github.com/mbriggs/punchclock/clock"
-	"github.com/mbriggs/punchclock/relay"
+	"github.com/mbriggs/bunk/box"
+	"github.com/mbriggs/bunk/clock"
+	"github.com/mbriggs/bunk/relay"
 )
 
 const usage = `usage:
-  punchclock up NAME       create a box, boot it, and print its SSH host key
-  punchclock rm NAME       stop a box and delete it
-  punchclock ls            list boxes
-  punchclock proxy NAME    connect stdin and stdout to the box's sshd (an ssh ProxyCommand)
+  bunk up NAME       create a box, boot it, and print its SSH host key
+  bunk rm NAME       stop a box and delete it
+  bunk ls            list boxes
+  bunk proxy NAME    connect stdin and stdout to the box's sshd (an ssh ProxyCommand)
 
 inside a box:
-  punchclock guest relay LISTEN_PATH VSOCK_PORT
-  punchclock guest clock VSOCK_PORT`
+  bunk guest relay LISTEN_PATH VSOCK_PORT
+  bunk guest clock VSOCK_PORT`
 
 func main() {
 	log.SetFlags(0)
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "punchclock:", err)
+		fmt.Fprintln(os.Stderr, "bunk:", err)
 		os.Exit(1)
 	}
 }
@@ -105,7 +105,7 @@ func up(name string) error {
 		return fmt.Errorf("box %s: supervisor exited (%v); see %s/supervisor.log", name, err, b.Dir)
 	case err := <-ready:
 		if err != nil {
-			return fmt.Errorf("%w; see %s/vm.log, and punchclock rm %s", err, b.Dir, name)
+			return fmt.Errorf("%w; see %s/vm.log, and bunk rm %s", err, b.Dir, name)
 		}
 	}
 	key, err := b.HostKey()

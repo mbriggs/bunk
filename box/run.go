@@ -15,10 +15,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mbriggs/punchclock/clock"
-	"github.com/mbriggs/punchclock/egress"
-	"github.com/mbriggs/punchclock/modelproxy"
-	"github.com/mbriggs/punchclock/relay"
+	"github.com/mbriggs/bunk/clock"
+	"github.com/mbriggs/bunk/egress"
+	"github.com/mbriggs/bunk/modelproxy"
+	"github.com/mbriggs/bunk/relay"
 )
 
 // Every box gets the same machine: Firecracker and vfkit only touch the

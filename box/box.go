@@ -26,14 +26,14 @@ import (
 	"syscall"
 )
 
-// Home is punchclock's directory on the build machine: $PUNCHCLOCK_HOME, or
-// ~/.local/share/punchclock.
+// Home is bunk's directory on the build machine: $BUNK_HOME, or
+// ~/.local/share/bunk.
 func Home() string {
-	if h := os.Getenv("PUNCHCLOCK_HOME"); h != "" {
+	if h := os.Getenv("BUNK_HOME"); h != "" {
 		return h
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "share", "punchclock")
+	return filepath.Join(home, ".local", "share", "bunk")
 }
 
 // Box is one box's directory. Its zero value isn't useful; use Open.
