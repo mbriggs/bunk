@@ -27,10 +27,18 @@ var hallpassPorts = map[string]uint32{"hallpass": 5001, "gh": 5002, "ssh": 5003,
 const hallpassDir = "/run/hallpass"
 
 // Run is the box's supervisor: it serves the host side of every vsock channel
-// and runs the VM until the VM exits or ctx is cancelled. A box has exactly
-// one supervisor; its pid is in the box's directory.
+// and runs the VM until the VM exits or ctx is cancelled. A box has at most
+// one supervisor, which holds the box's lock file; its pid is in the box's
+// directory.
 func (b Box) Run(ctx context.Context) error {
-	if b.Running() {
+	// The lock is held for the supervisor's life, so two `up`s racing on one
+	// box can't start two VMs on one disk.
+	lock, err := os.OpenFile(b.path("lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return fmt.Errorf("box %s is already running", b.Name)
 	}
 	fc, err := firecracker()

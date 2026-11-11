@@ -66,35 +66,28 @@ func run(args []string) error {
 	return nil
 }
 
-// up creates the box, starts its supervisor in its own session so it outlives
-// this command, and waits for sshd. It prints the box's SSH host key on
-// stdout, for known_hosts.
+// up makes sure the box exists and is running, then waits for sshd and
+// prints the box's SSH host key on stdout, for known_hosts. Running it again
+// converges on the same box, so a handoff that failed partway can be rerun.
+// A new box's supervisor starts in its own session, so it outlives this
+// command.
 func up(name string) error {
 	b, err := box.Open(name)
 	if err != nil {
 		return err
 	}
 	start := time.Now()
-	if err := b.Create(); err != nil {
-		return err
-	}
-	self, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	logf, err := os.OpenFile(b.Dir+"/supervisor.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer logf.Close()
-	sup := exec.Command(self, "supervise", name)
-	sup.Stdout, sup.Stderr = logf, logf
-	sup.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := sup.Start(); err != nil {
-		return err
+	if !b.Exists() {
+		if err := b.Create(); err != nil {
+			return err
+		}
 	}
 	exited := make(chan error, 1)
-	go func() { exited <- sup.Wait() }()
+	if !b.Running() {
+		if err := startSupervisor(b, exited); err != nil {
+			return err
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -114,6 +107,28 @@ func up(name string) error {
 	}
 	fmt.Fprintf(os.Stderr, "%s: up in %v\n", name, time.Since(start).Round(10*time.Millisecond))
 	fmt.Println(key)
+	return nil
+}
+
+// startSupervisor runs `punchclock supervise` for b in its own session,
+// logging to the box's directory. exited receives its exit.
+func startSupervisor(b box.Box, exited chan<- error) error {
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	logf, err := os.OpenFile(b.Dir+"/supervisor.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer logf.Close()
+	sup := exec.Command(self, "supervise", b.Name)
+	sup.Stdout, sup.Stderr = logf, logf
+	sup.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := sup.Start(); err != nil {
+		return err
+	}
+	go func() { exited <- sup.Wait() }()
 	return nil
 }
 

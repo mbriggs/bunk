@@ -4,10 +4,12 @@
 #
 # The context is this directory plus what boxes take from the build machine:
 # the punchclock and ferry it runs (ferry push keeps ferry in step with the
-# laptop), and hallpass's client binary and config, since boxes share its
-# broker. Claude, Codex, and Rex install fresh, so rebuilding picks up new
-# versions. podman owns /etc/hosts and /etc/hostname at build time, so they're
-# written at export; each box renames itself at boot.
+# laptop), hallpass's client binary and config, since boxes share its broker,
+# and the git user to commit as. Claude, Codex, and Rex reinstall at their
+# latest versions on the first build of each day (AGENTS=now forces it).
+#
+# podman owns /etc/hosts and /etc/hostname at build time, so they're written
+# at export; each box renames itself at boot.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 home=${PUNCHCLOCK_HOME:-$HOME/.local/share/punchclock}
@@ -19,9 +21,12 @@ cp "${FERRY:-$HOME/.local/bin/ferry}" "$ctx/ferry"
 cp /opt/hallpass/bin/hallpass "$ctx/hallpass"
 mkdir "$ctx/hallpass-etc"
 cp -R /etc/hallpass/gitconfig /etc/hallpass/allowed_signers /etc/hallpass/signing.pub /etc/hallpass/gh "$ctx/hallpass-etc/"
+git config -f "$ctx/user.gitconfig" user.name "$(git config --global user.name)"
+git config -f "$ctx/user.gitconfig" user.email "$(git config --global user.email)"
 sed -i 's|^http_unix_socket:.*|http_unix_socket: /run/hallpass/gh.sock|' "$ctx/hallpass-etc/gh/config.yml"
 
-podman build --pull=newer --build-arg USER="$(id -un)" --build-arg UID="$(id -u)" -t localhost/punchclock-box "$ctx"
+podman build -q --pull=newer --build-arg USER="$(id -un)" --build-arg UID="$(id -u)" \
+  --build-arg AGENTS="${AGENTS:-$(date +%F)}" -t localhost/punchclock-box "$ctx"
 podman rm -f punchclock-root >/dev/null 2>&1 || true
 podman create --name punchclock-root localhost/punchclock-box >/dev/null
 mkdir -p "$home/image"

@@ -23,7 +23,10 @@ RUN useradd -m -u "$UID" -s /bin/bash -G sudo "$USER" && \
     sed -i "s|^PATH=\"|PATH=\"/home/$USER/.local/bin:|" /etc/environment
 
 # Agents and tools. Rex's tarball install puts one binary in /usr/local/bin.
-RUN curl -fsSL https://pkgs.superlogical.com/rex/install.sh | sh -s -- --tarball && \
+# build.sh changes AGENTS each day, so the first build of a day reinstalls
+# these at their latest versions instead of reusing the cached layer.
+ARG AGENTS
+RUN echo "agents as of $AGENTS" && curl -fsSL https://pkgs.superlogical.com/rex/install.sh | sh -s -- --tarball && \
     npm i -g @openai/codex
 USER $USER
 RUN curl -fsSL https://claude.ai/install.sh | bash
@@ -36,11 +39,15 @@ COPY --chown=$UID:$UID claude-settings.json /home/$USER/.claude/settings.json
 RUN v=$(su - "$USER" -c 'claude --version' | cut -d' ' -f1) && \
     su "$USER" -c "printf '{\"hasCompletedOnboarding\":true,\"lastOnboardingVersion\":\"%s\",\"hasSeenAutoDefaultNudge\":true}\n' $v > /home/$USER/.claude.json"
 
+# Commits are made as the build machine's git user.
+COPY user.gitconfig /etc/punchclock/gitconfig
+RUN git config --system --add include.path /etc/punchclock/gitconfig
+
 # hallpass's client side, from the build machine: boxes share its broker.
 COPY hallpass /opt/hallpass/bin/hallpass
 COPY hallpass-etc/ /etc/hallpass/
 RUN ln -s hallpass /opt/hallpass/bin/hallpass-sign && \
-    git config --system include.path /etc/hallpass/gitconfig
+    git config --system --add include.path /etc/hallpass/gitconfig
 
 # ferry, from the build machine, so it speaks the laptop's protocol; the
 # sandbox marker makes it answer agents' folder-trust prompts.

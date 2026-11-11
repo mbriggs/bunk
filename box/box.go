@@ -86,18 +86,31 @@ func (b Box) HostKey() (string, error) {
 	return strings.TrimSpace(string(raw)), err
 }
 
-// Running reports whether the box's supervisor is alive.
+// Running reports whether the box's supervisor is alive: whether something
+// holds the box's lock. Unlike its pid, the lock can't outlive it.
 func (b Box) Running() bool {
-	pid, err := b.pid()
-	return err == nil && syscall.Kill(pid, 0) == nil
+	f, err := os.Open(b.path("lock"))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB) != nil {
+		return true
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false
 }
 
 // Stop signals the supervisor, which shuts the VM down, and waits for it to
-// exit. Stopping a box that isn't running does nothing.
+// exit. Stopping a box that isn't running does nothing; in particular, a pid
+// file left by a crash isn't trusted, since the pid may have been reused.
 func (b Box) Stop() error {
+	if !b.Running() {
+		return nil
+	}
 	pid, err := b.pid()
 	if err != nil {
-		return nil
+		return err
 	}
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		return nil
