@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 )
 
 const usage = `usage:
-  punchclock up NAME       create a box and boot it
+  punchclock up NAME       create a box, boot it, and print its SSH host key
   punchclock rm NAME       stop a box and delete it
   punchclock ls            list boxes
   punchclock proxy NAME    connect stdin and stdout to the box's sshd (an ssh ProxyCommand)
@@ -66,7 +67,8 @@ func run(args []string) error {
 }
 
 // up creates the box, starts its supervisor in its own session so it outlives
-// this command, and waits for sshd.
+// this command, and waits for sshd. It prints the box's SSH host key on
+// stdout, for known_hosts.
 func up(name string) error {
 	b, err := box.Open(name)
 	if err != nil {
@@ -110,7 +112,8 @@ func up(name string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s: up in %v\nhost key: %s\n", name, time.Since(start).Round(10*time.Millisecond), key)
+	fmt.Fprintf(os.Stderr, "%s: up in %v\n", name, time.Since(start).Round(10*time.Millisecond))
+	fmt.Println(key)
 	return nil
 }
 
@@ -129,8 +132,10 @@ func ls() error {
 	return nil
 }
 
-// proxy splices stdin and stdout to the box's sshd.
+// proxy splices stdin and stdout to the box's sshd. name may be an ssh alias
+// like t1.kant.box; the box is the part before the first dot.
 func proxy(name string) error {
+	name, _, _ = strings.Cut(name, ".")
 	b, err := box.Open(name)
 	if err != nil {
 		return err
