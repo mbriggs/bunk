@@ -30,14 +30,14 @@ RUN useradd -m -u "$UID" -s /bin/bash -G sudo "$USER" && \
     mkdir -p /etc/bunk && echo "$USER" > /etc/bunk/user && \
     sed -i "s|^PATH=\"|PATH=\"/home/$USER/.local/bin:|" /etc/environment
 
-# Agents and tools. Rex's tarball install puts one binary in /usr/local/bin.
-# build.sh changes AGENTS each day, so the first build of a day reinstalls
-# these at their latest versions instead of reusing the cached layer.
-ARG AGENTS
-RUN echo "agents as of $AGENTS" && curl -fsSL https://pkgs.superlogical.com/rex/install.sh | sh -s -- --tarball && \
-    npm i -g @openai/codex
+# Agents, at the versions pinned in versions (image/bump.sh). build.sh fetched
+# Rex's release archive and checked its sha256; Claude's installer checks the
+# version it downloads.
+ARG CLAUDE CODEX
+COPY rex /usr/local/bin/rex
+RUN npm i -g "@openai/codex@$CODEX"
 USER $USER
-RUN curl -fsSL https://claude.ai/install.sh | bash
+RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE"
 USER root
 
 # The box is the boundary: Claude runs without permission prompts. Onboarding

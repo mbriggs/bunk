@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -171,8 +172,12 @@ func proxy(name string) error {
 		io.Copy(c, os.Stdin)
 		c.Close()
 	}()
-	_, err = io.Copy(os.Stdout, c)
-	return err
+	// When ssh finishes, stdin closes and the goroutine closes c under this
+	// copy. That's the session ending, not a failure.
+	if _, err := io.Copy(os.Stdout, c); err != nil && !errors.Is(err, net.ErrClosed) {
+		return err
+	}
+	return nil
 }
 
 func supervise(name string) error {

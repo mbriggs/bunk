@@ -126,5 +126,5 @@ Each box lives in `~/.local/share/bunk/boxes/NAME`, which `bunk rm` deletes:
 ## Limits
 
 - Docker in a Firecracker box needs `--network host`. The CI kernel lacks the netfilter options Docker's bridge networking uses.
-- The image installs Claude, Codex, and Rex at build time, and `build.sh` reinstalls them on only the first build of each day. If the laptop's Claude is newer than the box's, ferry refuses to resume in the box. Rebuild the image with `AGENTS=now ./image/build.sh`.
+- The image pins Claude, Codex, and Rex in `image/versions`. ferry won't move a session between different Claude versions in either direction, so the pins follow the laptop: when its Claude updates, run `./image/bump.sh` on the laptop, commit `image/versions`, and rebuild the image on each build machine.
 - If a Mac box's supervisor is killed, vfkit keeps running. On Linux the VM dies with its supervisor.

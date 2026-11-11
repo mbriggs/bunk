@@ -11,11 +11,12 @@
 # cross-built from their checkouts, and ferry comes from its dist/. BUNK,
 # FERRY, and HALLPASS override any of them.
 #
-# Claude, Codex, and Rex reinstall at their latest versions on the first build
-# of each day (AGENTS=now forces it). The filesystem is made in a container
-# from the image itself, since macOS has no mkfs.ext4.
+# Claude, Codex, and Rex install at the versions pinned in ./versions, which
+# image/bump.sh updates. The filesystem is made in a container from the image
+# itself, since macOS has no mkfs.ext4.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
+. "$here/versions"
 home=${BUNK_HOME:-$HOME/.local/share/bunk}
 work="$home/image/build"
 rm -rf "$work"
@@ -44,6 +45,12 @@ Darwin)
   ;;
 esac
 
+case $(uname -m) in x86_64 | amd64) arch=amd64 ;; *) arch=arm64 ;; esac
+eval "rex_sha=\$REX_SHA256_$arch"
+curl -fsSL -o "$work/rex.tar.gz" "https://blob.superlogical.com/download/rex/$REX_CHANNEL/$REX_COMMIT/rex-linux-$arch.tar.gz"
+got=$(if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi < "$work/rex.tar.gz" | cut -d' ' -f1)
+[ "$got" = "$rex_sha" ] || { echo "build.sh: rex-linux-$arch.tar.gz is $got, not the pinned $rex_sha" >&2; exit 1; }
+tar -xzf "$work/rex.tar.gz" -C "$ctx" rex
 cp -R "$here/Containerfile" "$here/units" "$here/claude-settings.json" "$here/bunk-identity" "$ctx/"
 mkdir "$ctx/hallpass-etc"
 cp -R /etc/hallpass/gitconfig /etc/hallpass/allowed_signers /etc/hallpass/signing.pub /etc/hallpass/gh "$ctx/hallpass-etc/"
@@ -54,7 +61,7 @@ git config -f "$ctx/user.gitconfig" user.email "$(git config --global user.email
 
 $C build -q $PULL -t localhost/bunk-box -f "$ctx/Containerfile" \
   --build-arg USER="$(id -un)" --build-arg UID="$(id -u)" \
-  --build-arg AGENTS="${AGENTS:-$(date +%F)}" "$ctx" >/dev/null
+  --build-arg CLAUDE="$CLAUDE" --build-arg CODEX="$CODEX" "$ctx" >/dev/null
 
 $C rm -f bunk-root >/dev/null 2>&1 || true
 $C create --name bunk-root localhost/bunk-box >/dev/null

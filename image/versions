@@ -1,0 +1,9 @@
+# The agents baked into the box image. image/bump.sh rewrites this file;
+# build.sh installs exactly these.
+CLAUDE=2.1.322
+CODEX=0.167.0
+REX_CHANNEL=preview
+REX_VERSION=0.1.0-preview.16
+REX_COMMIT=aa2db1b21261b479a550559fb70e2c3a66c07ba2
+REX_SHA256_amd64=90b2429036d26f317aaac2490d014e07c9351b0b994b1329afce94b8ad4d333c
+REX_SHA256_arm64=f079c5bcc69a2960b400b9c3e80f341b2e3951c205cc9282869cfab0be9ff5eb
