@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // Home is bunk's directory on the build machine: $BUNK_HOME, or
@@ -170,6 +171,38 @@ func (b Box) killOrphanVM() error {
 		return fmt.Errorf("killing box %s's orphaned VM %d: %w", b.Name, pid, err)
 	}
 	return waitGone(pid)
+}
+
+// LastUsed is when the box last did anything: its supervisor's log is
+// written at each start and at each request the box sends out.
+func (b Box) LastUsed() time.Time {
+	for _, f := range []string{"supervisor.log", "."} {
+		if fi, err := os.Stat(b.path(f)); err == nil {
+			return fi.ModTime()
+		}
+	}
+	return time.Time{}
+}
+
+// GC removes the stopped boxes not used for at least age, and returns their
+// names. It never touches a running box: one may hold work that hasn't been
+// handed back yet.
+func GC(age time.Duration) ([]string, error) {
+	boxes, err := List()
+	if err != nil {
+		return nil, err
+	}
+	var removed []string
+	for _, b := range boxes {
+		if b.Running() || time.Since(b.LastUsed()) < age {
+			continue
+		}
+		if err := b.Remove(); err != nil {
+			return removed, err
+		}
+		removed = append(removed, b.Name)
+	}
+	return removed, nil
 }
 
 // List returns the boxes that exist, in name order.

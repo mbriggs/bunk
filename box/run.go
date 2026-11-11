@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -144,11 +145,42 @@ func (b Box) Run(ctx context.Context) error {
 	}
 }
 
+// DefaultMaxRunning caps the boxes running at once on a machine, unless
+// Home()/max-running says otherwise. Each box may use up to 8 GB, so the cap
+// is what keeps a runaway fan-out from exhausting the host.
+const DefaultMaxRunning = 8
+
 // Start runs this binary's `supervise NAME` for the box in its own session,
 // so it outlives the caller, logging to supervisor.log. The channel receives
 // its exit. A ready file left by a supervisor that died is removed first, so
 // WaitReady sees this boot's.
+//
+// Start refuses when MaxRunning boxes already run. Starts are serialized by a
+// lock, held until the new supervisor holds its box's lock, so parallel `up`s
+// can't all see room for one more.
 func (b Box) Start() (<-chan error, error) {
+	lock, err := os.OpenFile(filepath.Join(Home(), "start.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return nil, err
+	}
+	running := 0
+	boxes, err := List()
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range boxes {
+		if o.Running() {
+			running++
+		}
+	}
+	if max := MaxRunning(); running >= max {
+		return nil, fmt.Errorf("the limit on running boxes (%d) is reached; remove one with bunk rm, or raise the limit in %s", max, filepath.Join(Home(), "max-running"))
+	}
+
 	os.Remove(b.path("ready"))
 	self, err := os.Executable()
 	if err != nil {
@@ -167,7 +199,23 @@ func (b Box) Start() (<-chan error, error) {
 	}
 	exited := make(chan error, 1)
 	go func() { exited <- sup.Wait() }()
+	for range 100 {
+		if b.Running() || len(exited) > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	return exited, nil
+}
+
+// MaxRunning is how many boxes may run at once: Home()/max-running, or
+// DefaultMaxRunning.
+func MaxRunning() int {
+	raw, err := os.ReadFile(filepath.Join(Home(), "max-running"))
+	if n, perr := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil && perr == nil && n > 0 {
+		return n
+	}
+	return DefaultMaxRunning
 }
 
 // serveReady marks the box ready when the guest connects, which it does once

@@ -24,7 +24,8 @@ import (
 const usage = `usage:
   bunk up NAME       create a box, boot it, and print its SSH host key
   bunk rm NAME       stop a box and delete it
-  bunk ls            list boxes
+  bunk ls            list boxes, and when each was last used
+  bunk gc [DAYS]     delete stopped boxes unused for DAYS days (default 7); running ones are never touched
   bunk proxy NAME    connect stdin and stdout to the box's sshd (an ssh ProxyCommand)
 
 inside a box:
@@ -55,6 +56,19 @@ func run(args []string) error {
 		return b.Remove()
 	case cmd == "ls" && len(rest) == 0:
 		return ls()
+	case cmd == "gc" && len(rest) <= 1:
+		days := 7
+		if len(rest) == 1 {
+			var err error
+			if days, err = strconv.Atoi(rest[0]); err != nil || days < 0 {
+				return fmt.Errorf("gc: %q isn't a number of days", rest[0])
+			}
+		}
+		removed, err := box.GC(time.Duration(days) * 24 * time.Hour)
+		for _, n := range removed {
+			fmt.Println("removed", n)
+		}
+		return err
 	case cmd == "proxy" && len(rest) == 1:
 		return proxy(rest[0])
 	case cmd == "supervise" && len(rest) == 1:
@@ -84,14 +98,19 @@ func up(name string) error {
 		return err
 	}
 	start := time.Now()
+	created := false
 	if !b.Exists() {
 		if err := b.Create(); err != nil {
 			return err
 		}
+		created = true
 	}
 	var exited <-chan error
 	if !b.Running() {
 		if exited, err = b.Start(); err != nil {
+			if created {
+				b.Remove() // never started, so nothing in it to keep
+			}
 			return err
 		}
 	}
@@ -122,13 +141,16 @@ func ls() error {
 	if err != nil {
 		return err
 	}
+	running := 0
 	for _, b := range boxes {
 		state := "stopped"
 		if b.Running() {
 			state = "running"
+			running++
 		}
-		fmt.Printf("%s\t%s\n", b.Name, state)
+		fmt.Printf("%s\t%s\tused %s ago\n", b.Name, state, time.Since(b.LastUsed()).Round(time.Minute))
 	}
+	fmt.Fprintf(os.Stderr, "%d of %d running\n", running, box.MaxRunning())
 	return nil
 }
 

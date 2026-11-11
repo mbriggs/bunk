@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // testHome makes a bunk home with a small stand-in image and keys.
@@ -65,5 +66,28 @@ func TestKillOrphanVMSparesOtherProcesses(t *testing.T) {
 	}
 	if _, err := os.Stat(b.path("vm.pid")); !os.IsNotExist(err) {
 		t.Error("the stale vm.pid is still there")
+	}
+}
+
+// GC removes a stopped box unused for longer than the age, and keeps a
+// recent one.
+func TestGCRemovesOnlyOldBoxes(t *testing.T) {
+	testHome(t)
+	old, _ := Open("old")
+	recent, _ := Open("recent")
+	for _, b := range []Box{old, recent} {
+		if err := b.Create(); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(b.path("supervisor.log"), []byte("started\n"), 0o600)
+	}
+	weekAgo := time.Now().Add(-8 * 24 * time.Hour)
+	os.Chtimes(old.path("supervisor.log"), weekAgo, weekAgo)
+	removed, err := GC(7 * 24 * time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 || removed[0] != "old" || old.Exists() || !recent.Exists() {
+		t.Fatalf("GC removed %v; old exists %v, recent exists %v", removed, old.Exists(), recent.Exists())
 	}
 }
