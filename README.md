@@ -21,12 +21,10 @@ You need KVM, a home directory on btrfs or xfs (a box's disk is a reflink copy o
    GOOS=linux GOARCH=amd64 go build -o bunk . && scp bunk HOST:.local/bin/
    ```
 
-2. On the build machine, put Firecracker and a guest kernel in bunk's home, `~/.local/share/bunk`. Firecracker comes from its GitHub releases. The kernel must have vsock built in; the guest kernels in Firecracker's CI artifacts do:
+2. On the build machine, install the pinned Firecracker and guest kernel into bunk's home, `~/.local/share/bunk`. The script checks both against their sha256:
 
    ```sh
-   mkdir -p ~/.local/share/bunk/bin ~/.local/share/bunk/image
-   cp firecracker ~/.local/share/bunk/bin/
-   cp vmlinux ~/.local/share/bunk/image/
+   ./image/fetch-firecracker.sh
    ```
 
 3. Give boxes the allowlist, the mode, and the public keys that may log in to them. The mode is `allowlist`, or `open` to allow any name but GitHub's. Use the public half of the key the laptop's ssh config names below:
@@ -105,7 +103,7 @@ After changing the image, the kernel, or bunk, check a running box from the lapt
 ./check.sh NAME.kant.box
 ```
 
-Each line is one channel: egress, apt, the model endpoint, hallpass, the clock, and Claude editing and committing with no prompt. A line starts with `ok` or `FAIL`, and the exit status is the number of failures.
+Each line is one channel: egress, apt, the model endpoint, hallpass, the clock, and Claude editing and committing with no prompt. A line starts with `ok`, `FAIL`, or `skip`, and the exit status is the number of failures. `OFFLINE=1` skips the checks that need the build machine's Claude credentials or hallpass broker. CI (`.github/workflows/ci.yml`) boots a box in Firecracker on every push and runs the checks that way.
 
 ## Change the allowlist
 

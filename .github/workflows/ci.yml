@@ -1,0 +1,82 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: GOOS=linux go vet ./...
+      - run: go test ./...
+      - name: build every platform
+        run: |
+          for p in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
+            GOOS=${p%/*} GOARCH=${p#*/} go build -o /dev/null .
+          done
+
+  # Boot a real box in Firecracker and run check.sh's checks that need no
+  # Claude credentials or hallpass broker. GitHub's Linux runners have KVM.
+  boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: KVM for this user
+        run: sudo chmod 666 /dev/kvm
+      - name: bunk, Firecracker, and the kernel
+        run: |
+          mkdir -p ~/.local/bin
+          CGO_ENABLED=0 go build -o ~/.local/bin/bunk .
+          ./image/fetch-firecracker.sh
+      - name: ferry and hallpass for the image, from their public repos
+        run: |
+          git clone -q --depth 1 https://github.com/mbriggs/ferry /tmp/ferry
+          (cd /tmp/ferry && CGO_ENABLED=0 go build -o ~/.local/bin/ferry .)
+          git clone -q --depth 1 https://github.com/mbriggs/hallpass /tmp/hallpass
+          (cd /tmp/hallpass && CGO_ENABLED=0 go build -o /tmp/hallpass-bin ./cmd/hallpass)
+          # A stand-in client config: CI has no broker for boxes to reach.
+          mkdir -p /tmp/hallpass-etc/gh
+          touch /tmp/hallpass-etc/gitconfig /tmp/hallpass-etc/allowed_signers /tmp/hallpass-etc/signing.pub
+          printf 'http_unix_socket: /run/hallpass/gh.sock\n' > /tmp/hallpass-etc/gh/config.yml
+      - name: the box's home and the image
+        run: |
+          git config --global user.name ci && git config --global user.email ci@example.com
+          mkdir -p ~/.ssh && ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/bunk_ed25519
+          H=~/.local/share/bunk
+          cp ~/.ssh/bunk_ed25519.pub $H/authorized_keys
+          cp allow.txt $H/allow.txt
+          echo allowlist > $H/mode
+          HALLPASS=/tmp/hallpass-bin HALLPASS_ETC=/tmp/hallpass-etc ./image/build.sh
+      - name: boot a box and check it
+        run: |
+          mkdir -p -m 700 ~/.ssh/bunk
+          cat >> ~/.ssh/config <<CONFIG
+          Host *.ci.box
+            User $(id -un)
+            IdentityFile ~/.ssh/bunk_ed25519
+            IdentitiesOnly yes
+            UserKnownHostsFile ~/.ssh/bunk/%h
+            StrictHostKeyChecking yes
+            ProxyCommand ~/.local/bin/bunk proxy %h
+          CONFIG
+          key=$(~/.local/bin/bunk up ci1)
+          echo "ci1.ci.box $key" > ~/.ssh/bunk/ci1.ci.box
+          OFFLINE=1 ./check.sh ci1.ci.box
+      - name: box logs
+        if: failure()
+        run: |
+          for f in supervisor.log vm.log; do echo "== $f"; tail -50 ~/.local/share/bunk/boxes/ci1/$f || true; done

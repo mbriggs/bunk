@@ -9,7 +9,8 @@
 # ones this machine runs (ferry push keeps ferry in step with the laptop). A
 # Mac has no Linux binaries of its own, so bunk and hallpass are
 # cross-built from their checkouts, and ferry comes from its dist/. BUNK,
-# FERRY, and HALLPASS override any of them.
+# FERRY, and HALLPASS override any of them, and HALLPASS_ETC overrides
+# /etc/hallpass, hallpass's client config.
 #
 # Claude, Codex, and Rex install at the versions pinned in ./versions, which
 # image/bump.sh updates. The filesystem is made in a container from the image
@@ -53,9 +54,10 @@ got=$(if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi
 tar -xzf "$work/rex.tar.gz" -C "$ctx" rex
 cp -R "$here/Containerfile" "$here/units" "$here/claude-settings.json" "$here/bunk-identity" "$ctx/"
 mkdir "$ctx/hallpass-etc"
-cp -R /etc/hallpass/gitconfig /etc/hallpass/allowed_signers /etc/hallpass/signing.pub /etc/hallpass/gh "$ctx/hallpass-etc/"
+hp=${HALLPASS_ETC:-/etc/hallpass}
+cp -R "$hp/gitconfig" "$hp/allowed_signers" "$hp/signing.pub" "$hp/gh" "$ctx/hallpass-etc/"
 # In a box, hallpass's sockets are always in /run/hallpass.
-sed 's|^http_unix_socket:.*|http_unix_socket: /run/hallpass/gh.sock|' /etc/hallpass/gh/config.yml > "$ctx/hallpass-etc/gh/config.yml"
+sed 's|^http_unix_socket:.*|http_unix_socket: /run/hallpass/gh.sock|' "$hp/gh/config.yml" > "$ctx/hallpass-etc/gh/config.yml"
 git config -f "$ctx/user.gitconfig" user.name "$(git config --global user.name)"
 git config -f "$ctx/user.gitconfig" user.email "$(git config --global user.email)"
 
