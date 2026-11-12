@@ -22,6 +22,7 @@ package task
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -31,6 +32,7 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mbriggs/bunk/box"
 )
@@ -90,7 +92,12 @@ func Run(dir string, argv []string) (int, error) {
 	if err != nil {
 		return 1, fmt.Errorf("copying %s into box %s: %w", w.root, b.Name, err)
 	}
+	freeze, clear := mirrorSessions(s)
 	status := s.interactive("cd " + quote(w.cwd) + " && exec " + quoteAll(argv))
+	// The box's Claude has gone, but its work isn't home yet: keep the
+	// entries as they last were until the copy back is done.
+	freeze()
+	defer clear()
 	if err := w.copyOut(s, refs); err != nil {
 		os.WriteFile(unsynced, []byte(err.Error()+"\n"), 0o600)
 		return status, fmt.Errorf("copying %s back from box %s: %w", w.root, b.Name, err)
@@ -223,6 +230,71 @@ func (w where) copyOut(s shell, before map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// mirrorSessions copies the box's Claude session registry to the host's while
+// the command runs, every second, with this process's pid in place of the
+// box's. Tools on the host that ask whether a Claude session is running, and
+// whether it's busy (ferry, before it moves a task), then get the answer for
+// the box, and stopping that pid with SIGTERM ends the box's Claude, as it
+// would a local one. freeze stops copying and keeps the entries; clear
+// removes them. Run calls clear only after the copy back, so a session
+// counts as running until its work is home.
+func mirrorSessions(s shell) (freeze, clear func()) {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".claude", "sessions")
+	prefix := fmt.Sprintf("bunk-%d-", os.Getpid())
+	written := map[string]bool{}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	sync := func() {
+		out, err := s.run(`cat ~/.claude/sessions/*.json 2>/dev/null | jq -c 'select(.sessionId) | {sessionId, status}'`)
+		if err != nil {
+			return
+		}
+		seen := map[string]bool{}
+		for _, line := range strings.Split(out, "\n") {
+			var e struct {
+				SessionID string `json:"sessionId"`
+				Status    string `json:"status"`
+			}
+			if json.Unmarshal([]byte(line), &e) != nil || e.SessionID == "" || strings.ContainsAny(e.SessionID, "/.") {
+				continue
+			}
+			raw, _ := json.Marshal(map[string]any{"pid": os.Getpid(), "sessionId": e.SessionID, "status": e.Status, "via": "bunk"})
+			os.MkdirAll(dir, 0o700)
+			name := filepath.Join(dir, prefix+e.SessionID+".json")
+			os.WriteFile(name, raw, 0o600)
+			written[name], seen[name] = true, true
+		}
+		for name := range written {
+			if !seen[name] {
+				os.Remove(name)
+				delete(written, name)
+			}
+		}
+	}
+	go func() {
+		defer close(done)
+		for {
+			sync()
+			select {
+			case <-stop:
+				return
+			case <-time.After(time.Second):
+			}
+		}
+	}()
+	freeze = func() {
+		close(stop)
+		<-done
+	}
+	clear = func() {
+		for name := range written {
+			os.Remove(name)
+		}
+	}
+	return freeze, clear
 }
 
 // lockRun keeps two `bunk run`s from copying one box at once.

@@ -77,7 +77,8 @@ func clientKey() ([]byte, error) {
 
 // SSHConfig writes an ssh config that reaches the box as host NAME, through
 // this binary's `proxy`, with bunk's own key and the box's pinned host key,
-// and returns its path.
+// and returns its path. Connections share one ssh session, so bunk run's
+// copies and polls don't each pay for a handshake.
 func (b Box) SSHConfig() (string, error) {
 	key, err := b.HostKey()
 	if err != nil {
@@ -103,7 +104,10 @@ func (b Box) SSHConfig() (string, error) {
   StrictHostKeyChecking yes
   ProxyCommand %s proxy %s
   LogLevel ERROR
-`, b.Name, strings.TrimSpace(string(user)), filepath.Join(Home(), "id_ed25519"), b.path("known_hosts"), self, b.Name)
+  ControlMaster auto
+  ControlPath %s
+  ControlPersist 30
+`, b.Name, strings.TrimSpace(string(user)), filepath.Join(Home(), "id_ed25519"), b.path("known_hosts"), self, b.Name, b.path("ssh.ctl"))
 	path := b.path("ssh_config")
 	return path, os.WriteFile(path, []byte(cfg), 0o600)
 }
