@@ -31,7 +31,8 @@ const usage = `usage:
   bunk gc [DAYS]     delete stopped boxes unused for DAYS days (default 7); running ones are never touched
   bunk run CMD...    run CMD for this directory in its own box: copy the directory
                      in, run CMD there on this terminal, and copy the results back
-  bunk rm --dir DIR  delete DIR's box
+  bunk rm --dir DIR [--force]  delete DIR's box, unless a bunk run is using it
+                     or it holds work that didn't come back
   bunk ssh NAME [CMD...]  ssh into a box, or run CMD there
   bunk proxy NAME    connect stdin and stdout to the box's sshd (an ssh ProxyCommand)
 
@@ -68,15 +69,12 @@ func run(args []string) error {
 			}
 		}
 		os.Exit(status)
-	case cmd == "rm" && len(rest) == 2 && rest[0] == "--dir":
-		b, err := box.ForDir(rest[1])
-		if err != nil {
-			return err
+	case cmd == "rm" && len(rest) >= 2 && rest[0] == "--dir":
+		force := len(rest) == 3 && rest[2] == "--force"
+		if len(rest) == 3 && !force {
+			break
 		}
-		if !b.Exists() {
-			return nil // nothing to do: the directory never had a box
-		}
-		return b.Remove()
+		return task.Remove(rest[1], force)
 	case cmd == "rm" && len(rest) == 1:
 		b, err := box.Open(rest[0])
 		if err != nil {

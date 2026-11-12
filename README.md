@@ -72,7 +72,7 @@ bunk finds the worktree's box, named for the worktree and a hash of its path (li
 
 The copy back trusts the box with this worktree and nothing else. git objects only add. The branch moves only if nothing moved it on the host meanwhile. The rest of `.git`, such as hooks, config, and other branches, never comes back. If the branch moved, nothing but Claude's sessions comes back. bunk names the box's commit, which is already in the repository for you to merge or cherry-pick, and holds the box: the next `bunk run` there refuses instead of copying over it, until you `bunk rm --dir DIR`.
 
-The box stays between runs, so installed dependencies stay too. `bunk rm --dir DIR` deletes a directory's box. `bunk gc` deletes stopped boxes unused for a week, and stopped boxes whose directory is gone.
+The box stays between runs, so installed dependencies stay too. `bunk rm --dir DIR` deletes a directory's box. It refuses while a `bunk run` is using the box, or while the box holds work that didn't come back, unless you add `--force`. `bunk gc` deletes stopped boxes unused for a week, and stopped boxes whose directory is gone.
 
 ### With ferry
 
@@ -80,6 +80,12 @@ To have ferry start every agent on a build machine in its box, put the launch pr
 
 ```
 bunk run
+```
+
+And put the teardown command in `~/.config/ferry/teardown`, so `ferry teardown` deletes a task's box along with its worktree:
+
+```
+bunk rm --dir
 ```
 
 ferry then starts `bunk run claude --resume ...` in a pane of the machine's Rex. While a box's Claude runs, bunk shows its session to the host as its own, with bunk's pid. So ferry sees it as live and busy as usual. Stopping it with SIGTERM ends Claude in the box and copies the work back before bunk exits, and only then does `ferry from` move the task.

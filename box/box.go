@@ -190,16 +190,26 @@ func (b Box) killOrphanVM() error {
 	return waitGone(pid)
 }
 
-// LastUsed is when the box last did anything: its supervisor's log is
-// written at each start and at each request the box sends out.
+// LastUsed is when the box last did anything: when a bunk run last used it
+// (see Touch), or its supervisor last logged, which it does at each start and
+// at each request the box sends out.
 func (b Box) LastUsed() time.Time {
-	for _, f := range []string{"supervisor.log", "."} {
-		if fi, err := os.Stat(b.path(f)); err == nil {
-			return fi.ModTime()
+	var last time.Time
+	for _, f := range []string{"used", "supervisor.log"} {
+		if fi, err := os.Stat(b.path(f)); err == nil && fi.ModTime().After(last) {
+			last = fi.ModTime()
 		}
 	}
-	return time.Time{}
+	if last.IsZero() { // never started: when it was made
+		if fi, err := os.Stat(b.Dir); err == nil {
+			last = fi.ModTime()
+		}
+	}
+	return last
 }
+
+// Touch records that the box was just used.
+func (b Box) Touch() { os.WriteFile(b.path("used"), nil, 0o600) }
 
 // GC removes the stopped boxes not used for at least age, and the stopped
 // boxes whose workdir is gone, and returns their names. It never touches a

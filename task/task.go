@@ -68,6 +68,8 @@ func Run(dir string, argv []string) (int, error) {
 		return 1, err
 	}
 	defer unlock()
+	b.Touch()
+	defer b.Touch()
 	if err := b.Up(); err != nil {
 		if created && !b.Running() {
 			b.Remove()
@@ -333,6 +335,34 @@ func mirrorSessions(s shell) (freeze, clear func()) {
 		}
 	}
 	return freeze, clear
+}
+
+// Remove deletes dir's box, refusing while a bunk run is using it or when the
+// box holds work that didn't come back, unless force. A directory without a
+// box is fine: there's nothing to do.
+func Remove(dir string, force bool) error {
+	abs, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		abs = dir // the directory may be gone already; its box isn't
+	}
+	b, err := box.ForDir(abs)
+	if err != nil {
+		return err
+	}
+	if !b.Exists() {
+		return nil
+	}
+	if !force {
+		unlock, err := lockRun(b)
+		if err != nil {
+			return fmt.Errorf("%w; it's still running, so it may hold work (bunk rm --dir --force removes it anyway)", err)
+		}
+		defer unlock()
+		if why, err := os.ReadFile(filepath.Join(b.Dir, "unsynced")); err == nil {
+			return fmt.Errorf("box %s holds work that didn't come back: %s (bunk rm --dir --force removes it anyway)", b.Name, strings.TrimSpace(string(why)))
+		}
+	}
+	return b.Remove()
 }
 
 // lockRun keeps two `bunk run`s from copying one box at once.
