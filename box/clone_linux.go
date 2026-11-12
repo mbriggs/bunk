@@ -1,13 +1,19 @@
 package box
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
 
 // clone copies src to dst with a reflink, which is instant on btrfs and xfs.
-// It fails rather than falling back to a full copy of a 12 GB image.
+// On a filesystem without reflinks, such as ext4, it makes a sparse copy
+// instead: the image is 12 GB but mostly holes, so that copies only the 2 GB
+// or so of data, in seconds.
 func clone(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -19,9 +25,18 @@ func clone(src, dst string) error {
 		return err
 	}
 	defer out.Close()
-	if err := unix.IoctlFileClone(int(out.Fd()), int(in.Fd())); err != nil {
-		os.Remove(dst)
+	err = unix.IoctlFileClone(int(out.Fd()), int(in.Fd()))
+	if err == nil {
+		return out.Close()
+	}
+	out.Close()
+	os.Remove(dst)
+	if !errors.Is(err, unix.EOPNOTSUPP) && !errors.Is(err, unix.EXDEV) && !errors.Is(err, unix.EINVAL) {
 		return err
 	}
-	return out.Close()
+	if b, err := exec.Command("cp", "--sparse=always", src, dst).CombinedOutput(); err != nil {
+		os.Remove(dst)
+		return fmt.Errorf("cp --sparse=always: %v %s", err, strings.TrimSpace(string(b)))
+	}
+	return os.Chmod(dst, 0o600)
 }
