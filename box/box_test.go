@@ -29,7 +29,7 @@ func TestCreateIsWholeOrNothing(t *testing.T) {
 	}
 	os.MkdirAll(b.Dir+".new", 0o700) // what a crash mid-Create leaves
 	os.WriteFile(filepath.Join(b.Dir+".new", "disk.ext4"), []byte("half"), 0o600)
-	if err := b.Create(); err != nil {
+	if err := b.Create(""); err != nil {
 		t.Fatal(err)
 	}
 	for _, f := range []string{"disk.ext4", "identity.tar", "host_key.pub"} {
@@ -40,7 +40,7 @@ func TestCreateIsWholeOrNothing(t *testing.T) {
 	if _, err := os.Stat(b.Dir + ".new"); !os.IsNotExist(err) {
 		t.Errorf("%s.new is still there", b.Name)
 	}
-	if err := b.Create(); err == nil {
+	if err := b.Create(""); err == nil {
 		t.Error("a second Create of the same box succeeded")
 	}
 	boxes, _ := List()
@@ -54,7 +54,7 @@ func TestCreateIsWholeOrNothing(t *testing.T) {
 func TestKillOrphanVMSparesOtherProcesses(t *testing.T) {
 	testHome(t)
 	b, _ := Open("t2")
-	if err := b.Create(); err != nil {
+	if err := b.Create(""); err != nil {
 		t.Fatal(err)
 	}
 	os.WriteFile(b.path("vm.pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600)
@@ -76,7 +76,7 @@ func TestGCRemovesOnlyOldBoxes(t *testing.T) {
 	old, _ := Open("old")
 	recent, _ := Open("recent")
 	for _, b := range []Box{old, recent} {
-		if err := b.Create(); err != nil {
+		if err := b.Create(""); err != nil {
 			t.Fatal(err)
 		}
 		os.WriteFile(b.path("supervisor.log"), []byte("started\n"), 0o600)

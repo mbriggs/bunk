@@ -218,6 +218,30 @@ func MaxRunning() int {
 	return DefaultMaxRunning
 }
 
+// Up starts the box if it isn't running, and waits until it's ready.
+func (b Box) Up() error {
+	var exited <-chan error
+	if !b.Running() {
+		var err error
+		if exited, err = b.Start(); err != nil {
+			return err
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	ready := make(chan error, 1)
+	go func() { ready <- b.WaitReady(ctx) }()
+	select {
+	case err := <-exited:
+		return fmt.Errorf("box %s: supervisor exited (%v); see %s", b.Name, err, b.path("supervisor.log"))
+	case err := <-ready:
+		if err != nil {
+			return fmt.Errorf("%w; see %s, and bunk rm %s", err, b.path("vm.log"), b.Name)
+		}
+	}
+	return nil
+}
+
 // serveReady marks the box ready when the guest connects, which it does once
 // sshd is up. Dialing the guest's sshd to find out instead can wedge vfkit's
 // forwarder if it comes too early.
@@ -257,13 +281,22 @@ func (b Box) clearRunState() {
 	}
 }
 
-// credentials is where this machine's Claude keeps its OAuth token.
+// credentials is where this machine's token comes from: Home()/claude-token
+// if it exists (see modelproxy.Credentials), else this machine's Claude.
 func credentials() modelproxy.Credentials {
+	if f := filepath.Join(Home(), "claude-token"); exists(f) {
+		return modelproxy.Credentials{TokenFile: f}
+	}
 	if runtime.GOOS == "darwin" {
 		return modelproxy.Credentials{Cmd: "security find-generic-password -s 'Claude Code-credentials' -w"}
 	}
 	home, _ := os.UserHomeDir()
 	return modelproxy.Credentials{Path: filepath.Join(home, ".claude", ".credentials.json")}
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // waitGone waits for pid to exit.

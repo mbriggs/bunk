@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -61,11 +62,12 @@ func (b Box) Exists() bool {
 	return err == nil
 }
 
-// Create makes the box's directory, disk, and identity drive. It builds them
+// Create makes the box's directory, disk, and identity drive, for workdir if
+// it isn't "" (see ForDir). It builds them
 // in NAME.new and renames that into place, so a box that exists is whole: a
 // crash or a racing `up` can never boot a half-made one. It fails if the box
 // already exists.
-func (b Box) Create() error {
+func (b Box) Create(workdir string) error {
 	if err := os.MkdirAll(filepath.Dir(b.Dir), 0o755); err != nil {
 		return err
 	}
@@ -85,6 +87,21 @@ func (b Box) Create() error {
 	if err := writeIdentity(staged); err != nil {
 		os.RemoveAll(staged.Dir)
 		return err
+	}
+	// The box's user is this machine's, as the image was built.
+	who := os.Getenv("USER")
+	if u, err := user.Current(); err == nil {
+		who = u.Username
+	}
+	if err := os.WriteFile(staged.path("user"), []byte(who+"\n"), 0o600); err != nil {
+		os.RemoveAll(staged.Dir)
+		return err
+	}
+	if workdir != "" {
+		if err := os.WriteFile(staged.path("workdir"), []byte(workdir+"\n"), 0o600); err != nil {
+			os.RemoveAll(staged.Dir)
+			return err
+		}
 	}
 	if err := os.Rename(staged.Dir, b.Dir); err != nil {
 		os.RemoveAll(staged.Dir)
@@ -184,9 +201,9 @@ func (b Box) LastUsed() time.Time {
 	return time.Time{}
 }
 
-// GC removes the stopped boxes not used for at least age, and returns their
-// names. It never touches a running box: one may hold work that hasn't been
-// handed back yet.
+// GC removes the stopped boxes not used for at least age, and the stopped
+// boxes whose workdir is gone, and returns their names. It never touches a
+// running box: one may hold work that hasn't been handed back yet.
 func GC(age time.Duration) ([]string, error) {
 	boxes, err := List()
 	if err != nil {
@@ -194,7 +211,15 @@ func GC(age time.Duration) ([]string, error) {
 	}
 	var removed []string
 	for _, b := range boxes {
-		if b.Running() || time.Since(b.LastUsed()) < age {
+		if b.Running() {
+			continue
+		}
+		dirGone := false
+		if w := b.Workdir(); w != "" {
+			_, err := os.Stat(w)
+			dirGone = os.IsNotExist(err)
+		}
+		if !dirGone && time.Since(b.LastUsed()) < age {
 			continue
 		}
 		if err := b.Remove(); err != nil {

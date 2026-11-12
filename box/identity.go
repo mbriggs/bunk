@@ -23,6 +23,11 @@ func writeIdentity(b Box) error {
 	if err != nil {
 		return fmt.Errorf("the keys that may log in to boxes: %w", err)
 	}
+	own, err := clientKey()
+	if err != nil {
+		return err
+	}
+	authorized = append(append(authorized, '\n'), own...)
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return err

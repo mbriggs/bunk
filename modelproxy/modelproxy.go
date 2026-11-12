@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // Sentinel is the token a box's Claude is configured with.
@@ -21,12 +22,19 @@ const Sentinel = "sentinel"
 
 var upstream = &url.URL{Scheme: "https", Host: "api.anthropic.com"}
 
-// Credentials reads Claude's credentials JSON: from the file at path, or, if
-// cmd is set, from that shell command's output (on macOS, Claude keeps them in
-// the Keychain).
+// Credentials says where the real token comes from: a file holding just the
+// token (TokenFile, as `claude setup-token` prints it), or else Claude's
+// credentials JSON, from the file at Path or from Cmd's output (on macOS,
+// Claude keeps it in the Keychain).
+//
+// Claude's credentials hold a short-lived token that only the host's own
+// Claude refreshes, so they suit a machine where Claude runs every day. A
+// token from `claude setup-token` lasts about a year, and suits a build
+// machine where nothing else runs Claude.
 type Credentials struct {
-	Path string
-	Cmd  string
+	TokenFile string
+	Path      string
+	Cmd       string
 }
 
 // Handler returns the proxy. Requests that don't carry the sentinel pass
@@ -56,6 +64,16 @@ func Handler(creds Credentials) http.Handler {
 }
 
 func (c Credentials) token() (string, error) {
+	if c.TokenFile != "" {
+		raw, err := os.ReadFile(c.TokenFile)
+		if err != nil {
+			return "", err
+		}
+		if tok := strings.TrimSpace(string(raw)); tok != "" {
+			return tok, nil
+		}
+		return "", errors.New("the token file is empty")
+	}
 	var raw []byte
 	var err error
 	if c.Cmd != "" {

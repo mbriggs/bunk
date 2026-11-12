@@ -20,6 +20,7 @@ import (
 	"github.com/mbriggs/bunk/box"
 	"github.com/mbriggs/bunk/clock"
 	"github.com/mbriggs/bunk/relay"
+	"github.com/mbriggs/bunk/task"
 )
 
 const usage = `usage:
@@ -27,6 +28,9 @@ const usage = `usage:
   bunk rm NAME       stop a box and delete it
   bunk ls            list boxes, and when each was last used
   bunk gc [DAYS]     delete stopped boxes unused for DAYS days (default 7); running ones are never touched
+  bunk run CMD...    run CMD for this directory in its own box: copy the directory
+                     in, run CMD there on this terminal, and copy the results back
+  bunk rm --dir DIR  delete DIR's box
   bunk proxy NAME    connect stdin and stdout to the box's sshd (an ssh ProxyCommand)
 
 inside a box:
@@ -49,6 +53,28 @@ func run(args []string) error {
 	switch {
 	case cmd == "up" && len(rest) == 1:
 		return up(rest[0])
+	case cmd == "run" && len(rest) >= 1:
+		dir, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		status, err := task.Run(dir, rest)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "bunk:", err)
+			if status == 0 {
+				status = 1
+			}
+		}
+		os.Exit(status)
+	case cmd == "rm" && len(rest) == 2 && rest[0] == "--dir":
+		b, err := box.ForDir(rest[1])
+		if err != nil {
+			return err
+		}
+		if !b.Exists() {
+			return nil // nothing to do: the directory never had a box
+		}
+		return b.Remove()
 	case cmd == "rm" && len(rest) == 1:
 		b, err := box.Open(rest[0])
 		if err != nil {
@@ -101,32 +127,16 @@ func up(name string) error {
 	start := time.Now()
 	created := false
 	if !b.Exists() {
-		if err := b.Create(); err != nil {
+		if err := b.Create(""); err != nil {
 			return err
 		}
 		created = true
 	}
-	var exited <-chan error
-	if !b.Running() {
-		if exited, err = b.Start(); err != nil {
-			if created {
-				b.Remove() // never started, so nothing in it to keep
-			}
-			return err
+	if err := b.Up(); err != nil {
+		if created && !b.Running() {
+			b.Remove() // never started, so nothing in it to keep
 		}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-	ready := make(chan error, 1)
-	go func() { ready <- b.WaitReady(ctx) }()
-	select {
-	case err := <-exited:
-		return fmt.Errorf("box %s: supervisor exited (%v); see %s/supervisor.log", name, err, b.Dir)
-	case err := <-ready:
-		if err != nil {
-			return fmt.Errorf("%w; see %s/vm.log, and bunk rm %s", err, b.Dir, name)
-		}
+		return err
 	}
 	key, err := b.HostKey()
 	if err != nil {
