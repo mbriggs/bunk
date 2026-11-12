@@ -77,10 +77,10 @@ To hand the current task to a fresh box on kant, run this in its worktree:
 ferry to kant --sandbox
 ```
 
-ferry runs `bunk up` on kant to make a box named after the task: the worktree's name plus a short hash of its path, like `fix-auth-3f9c2a`. It moves the worktree and the Claude session in, and resumes Claude there in Rex. ferry prints the box's ssh name. To bring the task back and delete its box:
+ferry runs `bunk up` on kant to make a box named after the task: the worktree's name plus a short hash of its path, like `fix-auth-3f9c2a`. It moves the worktree and the Claude session in, and resumes Claude there in Rex. To bring the task back and delete its box, run this in the same worktree. ferry works out the box's name from the task, as it did on the way out:
 
 ```sh
-ferry from fix-auth-3f9c2a.kant.box
+ferry from kant --sandbox
 ```
 
 To start new tasks in parallel, make a worktree for each and start Claude in a box with a prompt:
@@ -91,7 +91,7 @@ cd .claude/worktrees/fix-login
 ferry to kant --sandbox --prompt "Fix the login redirect and commit it."
 ```
 
-`ferry from fix-login-HASH.kant.box`, with the name ferry printed, brings back the branch and the session Claude made.
+`ferry from kant --sandbox`, run in that worktree, brings back the branch and the session Claude made.
 
 On the build machine, `bunk ls` lists boxes and `bunk rm NAME` deletes one. `bunk up NAME` makes a box, or starts it again if it exists.
 
