@@ -6,7 +6,6 @@
 //	host port 9           the guest says it's ready
 //	host port 123         the host's time
 //	host port 3128        the egress proxy
-//	host port 8787        the model endpoint
 //	host ports 5001-5004  hallpass's hallpass, gh, ssh, and git sockets
 //
 // Each box lives in one directory under Home()/boxes: its disk (a reflink copy

@@ -5,11 +5,10 @@ bunk runs an agent in a sandbox VM, called a box, from a terminal on the build m
 A box has no network device. Everything it reaches goes over vsock to its supervisor on the host:
 
 - An HTTPS proxy that allows only the names in an allowlist.
-- The Claude API, with the host's token swapped in for a sentinel, so no credential enters the box.
 - The host's hallpass broker, for git and gh against GitHub.
 - The host's clock, and sshd, which bunk uses to run commands and copy files.
 
-Inside, Claude runs without permission prompts, because the VM is the boundary. It has the host's instructions, settings, skills, and plugins, copied in each run.
+Inside, Claude runs without permission prompts, because the VM is the boundary. It has the host's instructions, settings, skills, and plugins, copied in each run, and signs in with your own token from `claude setup-token`, which bunk gives each box when it starts. The allowlist lets it reach `api.anthropic.com`. The token is in the box, so a box gone wrong could use it: revoke it at claude.ai if that happens.
 
 A Linux build machine runs boxes in Firecracker. A Mac runs them in vfkit (Virtualization.framework).
 
@@ -36,11 +35,13 @@ You need KVM, a home directory on btrfs or xfs (a box's disk is a reflink copy o
    echo allowlist > ~/.local/share/bunk/mode
    ```
 
-4. Give the model proxy a token. A machine where Claude doesn't run every day can't rely on Claude's own credentials, which expire within hours unless that Claude refreshes them. Make a token that lasts about a year with `claude setup-token`, on any machine, and save it on the build machine:
+4. Give boxes a Claude token, from `claude setup-token`, encrypted with systemd-creds under the machine's key and TPM, so it isn't on disk in the clear. This reads the token from stdin, here from 1Password:
 
    ```sh
-   umask 077 && cat > ~/.local/share/bunk/claude-token    # paste the token, then ^D
+   op read "op://Private/Claude Long OAuth/credential" | ssh HOST 'umask 077 && systemd-creds encrypt --user --with-key=host+tpm2 --name=bunk-claude-token - ~/.local/share/bunk/claude-token.cred'
    ```
+
+   Without systemd-creds, a plain `~/.local/share/bunk/claude-token`, mode 0600, works too.
 
 5. Copy `image/` to the build machine, and build the image there. It takes about a minute:
 
@@ -50,11 +51,17 @@ You need KVM, a home directory on btrfs or xfs (a box's disk is a reflink copy o
 
 ## Set up a Mac build machine
 
-You need vfkit (`brew install vfkit`), Docker (OrbStack works), Go, and a checkout of hallpass in `~/src/hallpass`. `build.sh` cross-builds bunk and hallpass for the box from the checkouts. The model proxy uses the Mac's own Claude credentials, from the Keychain.
+You need vfkit (`brew install vfkit`), Docker (OrbStack works), Go, and a checkout of hallpass in `~/src/hallpass`. `build.sh` cross-builds bunk and hallpass for the box from the checkouts.
 
 1. Build bunk in this checkout (`go build`), and install it in `~/.local/bin` or `~/.local/share/bunk/bin`.
-2. Give boxes the allowlist and mode, as in step 3 for Linux.
-3. Build the image from this checkout. On a Mac it also writes the kernel (`Image`) and the empty initrd vfkit requires:
+2. Give boxes the allowlist and the mode, as in step 3 for Linux.
+3. Give boxes a Claude token, from `claude setup-token`, in the login Keychain. This asks for the token instead of taking it on the command line:
+
+   ```sh
+   security add-generic-password -U -s bunk-claude-token -a "$USER" -w
+   ```
+
+4. Build the image from this checkout. On a Mac it also writes the kernel (`Image`) and the empty initrd vfkit requires:
 
    ```sh
    ./image/build.sh
@@ -105,7 +112,7 @@ After changing the image, the kernel, or bunk, check a running box on its build 
 bunk up c1 && ./check.sh c1; bunk rm c1
 ```
 
-Each line is one channel: egress, apt, the model endpoint, hallpass, the clock, and Claude editing and committing with no prompt. A line starts with `ok`, `FAIL`, or `skip`, and the exit status is the number of failures. `OFFLINE=1` skips the checks that need the build machine's Claude token or hallpass broker. CI (`.github/workflows/ci.yml`) boots a box in Firecracker on every push and runs the checks that way.
+Each line is one channel: egress, apt, hallpass, the clock, and Claude signing in, editing, and committing with no prompt. A line starts with `ok`, `FAIL`, or `skip`, and the exit status is the number of failures. `OFFLINE=1` skips the checks that need a Claude token or the build machine's hallpass broker. CI (`.github/workflows/ci.yml`) boots a box in Firecracker on every push and runs the checks that way.
 
 ## Change the allowlist
 

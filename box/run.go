@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -18,7 +16,6 @@ import (
 
 	"github.com/mbriggs/bunk/clock"
 	"github.com/mbriggs/bunk/egress"
-	"github.com/mbriggs/bunk/modelproxy"
 	"github.com/mbriggs/bunk/relay"
 )
 
@@ -34,7 +31,6 @@ const (
 	portReady = 9    // the guest connects once sshd is up
 	portClock = 123  // the host's time
 	portProxy = 3128 // the egress proxy
-	portModel = 8787 // the model endpoint
 )
 
 // hallpassPorts carry hallpass's sockets. Boxes share the build machine
@@ -48,13 +44,11 @@ type channel struct {
 }
 
 func (b Box) channels() []channel {
-	model := modelproxy.Handler(credentials())
 	policy := egress.Policy{AllowFile: filepath.Join(Home(), "allow.txt"), ModeFile: filepath.Join(Home(), "mode")}
 	cs := []channel{
 		{portReady, b.serveReady},
 		{portClock, clock.Serve},
 		{portProxy, func(ln net.Listener) error { return egress.Serve(ln, policy) }},
-		{portModel, func(ln net.Listener) error { return http.Serve(ln, model) }},
 	}
 	for name, port := range hallpassPorts {
 		target := filepath.Join(hallpassDir, name+".sock")
@@ -239,7 +233,7 @@ func (b Box) Up() error {
 			return fmt.Errorf("%w; see %s, and bunk rm %s", err, b.path("vm.log"), b.Name)
 		}
 	}
-	return nil
+	return b.installClaudeToken()
 }
 
 // serveReady marks the box ready when the guest connects, which it does once
@@ -279,19 +273,6 @@ func (b Box) clearRunState() {
 	for _, m := range matches {
 		os.Remove(m)
 	}
-}
-
-// credentials is where this machine's token comes from: Home()/claude-token
-// if it exists (see modelproxy.Credentials), else this machine's Claude.
-func credentials() modelproxy.Credentials {
-	if f := filepath.Join(Home(), "claude-token"); exists(f) {
-		return modelproxy.Credentials{TokenFile: f}
-	}
-	if runtime.GOOS == "darwin" {
-		return modelproxy.Credentials{Cmd: "security find-generic-password -s 'Claude Code-credentials' -w"}
-	}
-	home, _ := os.UserHomeDir()
-	return modelproxy.Credentials{Path: filepath.Join(home, ".claude", ".credentials.json")}
 }
 
 func exists(path string) bool {

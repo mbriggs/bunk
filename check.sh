@@ -5,8 +5,8 @@
 #
 #   bunk up c1 && ./check.sh c1 && bunk rm c1
 #
-# With OFFLINE=1, it skips the checks that need the build machine's Claude
-# credentials or hallpass broker, as in CI.
+# With OFFLINE=1, it skips the checks that need a Claude token or the build
+# machine's hallpass broker, as in CI.
 set -u
 "${BUNK:-bunk}" ssh "$1" "OFFLINE=${OFFLINE:-} sh -s" <<'CHECKS'
 fails=0
@@ -18,7 +18,6 @@ check "egress allows registry.npmjs.org" sh -c '[ "$(curl -s -o /dev/null -w %{h
 check "egress refuses example.com"      sh -c '! curl -sf -o /dev/null https://example.com/'
 check "egress refuses github.com"       sh -c '! curl -sf -o /dev/null https://github.com/'
 check "apt through the proxy"           sudo apt-get update -qq
-online "model endpoint swaps the token"  sh -c '[ "$(curl -s -o /dev/null -w %{http_code} -H "Authorization: Bearer sentinel" -H "anthropic-version: 2023-06-01" http://127.0.0.1:8787/v1/models)" = 200 ]'
 online "hallpass: git clone"             sh -c 'rm -rf /tmp/c-hp && git clone -q --depth 1 git@github.com:mbriggs/hallpass.git /tmp/c-hp'
 online "hallpass: gh api"                /opt/hallpass/bin/hallpass gh api repos/mbriggs/hallpass --jq .full_name
 online "claude edits without a prompt, commits signed" sh -c '

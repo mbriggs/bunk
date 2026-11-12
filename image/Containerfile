@@ -43,8 +43,9 @@ RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE"
 USER root
 
 # What the box needs from Claude is managed settings, which outrank the user
-# settings bunk run copies in from the host: the model endpoint and sentinel
-# token, no permission prompts (the box is the boundary), and no updater.
+# settings bunk run copies in from the host: no permission prompts (the box is
+# the boundary) and no updater. bunk adds the user's token from
+# `claude setup-token` each time the box starts.
 # Onboarding is marked done so the TUI skips its direct check of
 # api.anthropic.com, and the auto-mode nudge is marked seen so it doesn't
 # wait on an answer.
@@ -71,7 +72,7 @@ RUN rm -f /etc/ssh/ssh_host_* && \
     printf 'HostKey /etc/ssh/ssh_host_ed25519_key\nPasswordAuthentication no\n' > /etc/ssh/sshd_config.d/bunk.conf && \
     systemctl enable ssh.service bunk-identity.service bunk-ready.service bunk-clock.service \
       bunk-ssh.service bunk-proxy.service \
-      bunk-model.service bunk-hallpass@hallpass.service bunk-hallpass@gh.service \
+      bunk-hallpass@hallpass.service bunk-hallpass@gh.service \
       bunk-hallpass@ssh.service bunk-hallpass@git.service && \
     systemctl mask systemd-networkd-wait-online.service systemd-resolved.service serial-getty@ttyS0.service serial-getty@hvc0.service && \
     printf '/dev/vda / ext4 rw,relatime 0 1\n' > /etc/fstab && passwd -d root >/dev/null
