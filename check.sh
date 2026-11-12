@@ -1,14 +1,14 @@
 #!/bin/sh
-# check.sh SSH_TARGET: check a running box end to end, from the laptop.
-# Each line is one channel or promise; the exit status is the number that
-# failed. Run it after changing the image, the kernel, or bunk.
+# check.sh BOX: check a running box end to end, on its build machine. Each
+# line is one channel or promise; the exit status is the number that failed.
+# Run it after changing the image, the kernel, or bunk.
 #
-#   ./check.sh k1.kant.box
+#   bunk up c1 && ./check.sh c1 && bunk rm c1
 #
 # With OFFLINE=1, it skips the checks that need the build machine's Claude
 # credentials or hallpass broker, as in CI.
 set -u
-ssh -o ConnectTimeout=20 "$1" "OFFLINE=${OFFLINE:-} sh -s" <<'CHECKS'
+"${BUNK:-bunk}" ssh "$1" "OFFLINE=${OFFLINE:-} sh -s" <<'CHECKS'
 fails=0
 online() { if [ -n "$OFFLINE" ]; then echo "skip  $1"; else check "$@"; fi; }
 check() { name=$1; shift; if out=$("$@" 2>&1); then echo "ok    $name"; else echo "FAIL  $name: $(echo "$out" | tail -1)"; fails=$((fails+1)); fi; }
@@ -25,6 +25,5 @@ online "claude edits without a prompt, commits signed" sh -c '
   rm -rf /tmp/c-t && mkdir /tmp/c-t && cd /tmp/c-t && git init -q && echo a > f && git add f && git commit -qm a &&
   claude -p "Append the line b to the file f and commit it with the message b." >/dev/null &&
   grep -qx b f && [ "$(git log -1 --format=%G?)" = G ]'
-check "ferry is a sandbox"              test -f ~/.config/ferry/sandbox
 exit $fails
 CHECKS

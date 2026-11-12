@@ -4,13 +4,11 @@
 # the empty initrd vfkit requires.
 #
 # The context is this directory plus what boxes take from the build machine:
-# bunk and ferry, hallpass's client binary and config, since boxes share
-# its broker, and the git user to commit as. On Linux the binaries are the
-# ones this machine runs (ferry push keeps ferry in step with the laptop). A
-# Mac has no Linux binaries of its own, so bunk and hallpass are
-# cross-built from their checkouts, and ferry comes from its dist/. BUNK,
-# FERRY, and HALLPASS override any of them, and HALLPASS_ETC overrides
-# /etc/hallpass, hallpass's client config.
+# bunk, hallpass's client binary and config, since boxes share its broker,
+# and the git user to commit as. On Linux the binaries are the ones this
+# machine runs. A Mac has no Linux binaries of its own, so bunk and hallpass
+# are cross-built from their checkouts. BUNK and HALLPASS override either,
+# and HALLPASS_ETC overrides /etc/hallpass, hallpass's client config.
 #
 # Claude, Codex, and Rex install at the versions pinned in ./versions, which
 # image/bump.sh updates. The filesystem is made in a container from the image
@@ -29,7 +27,6 @@ case $(uname -s) in
 Linux)
   C=podman PULL=--pull=newer
   cp "${BUNK:-$HOME/.local/bin/bunk}" "$ctx/bunk"
-  cp "${FERRY:-$HOME/.local/bin/ferry}" "$ctx/ferry"
   cp "${HALLPASS:-/opt/hallpass/bin/hallpass}" "$ctx/hallpass"
   ;;
 Darwin)
@@ -38,7 +35,6 @@ Darwin)
   else (cd "$here/.." && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$ctx/bunk" .); fi
   if [ -n "${HALLPASS:-}" ]; then cp "$HALLPASS" "$ctx/hallpass"
   else (cd "$HOME/src/hallpass" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$ctx/hallpass" ./cmd/hallpass); fi
-  cp "${FERRY:-$HOME/src/ferry/dist/ferry-linux-arm64}" "$ctx/ferry"
   ;;
 *)
   echo "build.sh: no box backend for $(uname -s)" >&2
@@ -52,7 +48,7 @@ curl -fsSL -o "$work/rex.tar.gz" "https://blob.superlogical.com/download/rex/$RE
 got=$(if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi < "$work/rex.tar.gz" | cut -d' ' -f1)
 [ "$got" = "$rex_sha" ] || { echo "build.sh: rex-linux-$arch.tar.gz is $got, not the pinned $rex_sha" >&2; exit 1; }
 tar -xzf "$work/rex.tar.gz" -C "$ctx" rex
-cp -R "$here/Containerfile" "$here/units" "$here/claude-settings.json" "$here/bunk-identity" "$ctx/"
+cp -R "$here/Containerfile" "$here/units" "$here/managed-settings.json" "$here/bunk-identity" "$ctx/"
 mkdir "$ctx/hallpass-etc"
 hp=${HALLPASS_ETC:-/etc/hallpass}
 cp -R "$hp/gitconfig" "$hp/allowed_signers" "$hp/signing.pub" "$hp/gh" "$ctx/hallpass-etc/"
@@ -62,7 +58,7 @@ git config -f "$ctx/user.gitconfig" user.name "$(git config --global user.name)"
 git config -f "$ctx/user.gitconfig" user.email "$(git config --global user.email)"
 
 $C build -q $PULL -t localhost/bunk-box -f "$ctx/Containerfile" \
-  --build-arg USER="$(id -un)" --build-arg UID="$(id -u)" \
+  --build-arg USER="$(id -un)" --build-arg UID="$(id -u)" --build-arg HOMEDIR="$HOME" \
   --build-arg CLAUDE="$CLAUDE" --build-arg CODEX="$CODEX" "$ctx" >/dev/null
 
 $C rm -f bunk-root >/dev/null 2>&1 || true

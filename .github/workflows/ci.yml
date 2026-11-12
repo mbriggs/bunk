@@ -42,40 +42,24 @@ jobs:
           mkdir -p ~/.local/bin
           CGO_ENABLED=0 go build -o ~/.local/bin/bunk .
           ./image/fetch-firecracker.sh
-      - name: ferry and hallpass for the image, from their public repos
+      - name: hallpass for the image, from its public repo
         run: |
-          git clone -q --depth 1 https://github.com/mbriggs/ferry /tmp/ferry
-          (cd /tmp/ferry && CGO_ENABLED=0 go build -o ~/.local/bin/ferry .)
           git clone -q --depth 1 https://github.com/mbriggs/hallpass /tmp/hallpass
           (cd /tmp/hallpass && CGO_ENABLED=0 go build -o /tmp/hallpass-bin ./cmd/hallpass)
           # A stand-in client config: CI has no broker for boxes to reach.
           mkdir -p /tmp/hallpass-etc/gh
           touch /tmp/hallpass-etc/gitconfig /tmp/hallpass-etc/allowed_signers /tmp/hallpass-etc/signing.pub
           printf 'http_unix_socket: /run/hallpass/gh.sock\n' > /tmp/hallpass-etc/gh/config.yml
-      - name: the box's home and the image
+      - name: the image
         run: |
           git config --global user.name ci && git config --global user.email ci@example.com
-          mkdir -p ~/.ssh && ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/bunk_ed25519
-          H=~/.local/share/bunk
-          cp ~/.ssh/bunk_ed25519.pub $H/authorized_keys
-          cp allow.txt $H/allow.txt
-          echo allowlist > $H/mode
+          cp allow.txt ~/.local/share/bunk/allow.txt
+          echo allowlist > ~/.local/share/bunk/mode
           HALLPASS=/tmp/hallpass-bin HALLPASS_ETC=/tmp/hallpass-etc ./image/build.sh
       - name: boot a box and check it
         run: |
-          mkdir -p -m 700 ~/.ssh/bunk
-          cat >> ~/.ssh/config <<CONFIG
-          Host *.ci.box
-            User $(id -un)
-            IdentityFile ~/.ssh/bunk_ed25519
-            IdentitiesOnly yes
-            UserKnownHostsFile ~/.ssh/bunk/%h
-            StrictHostKeyChecking yes
-            ProxyCommand ~/.local/bin/bunk proxy %h
-          CONFIG
-          key=$(~/.local/bin/bunk up ci1)
-          echo "ci1.ci.box $key" > ~/.ssh/bunk/ci1.ci.box
-          OFFLINE=1 ./check.sh ci1.ci.box
+          ~/.local/bin/bunk up ci1
+          OFFLINE=1 BUNK=~/.local/bin/bunk ./check.sh ci1
       - name: box logs
         if: failure()
         run: |

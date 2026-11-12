@@ -3,13 +3,13 @@
 # context. Nothing in it is per box: a box's hostname, host key, and
 # authorized_keys come from its identity drive at boot.
 FROM ubuntu:24.04
-ARG USER UID TARGETARCH
+ARG USER UID HOMEDIR TARGETARCH
 
 RUN userdel -r ubuntu && \
     apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       systemd systemd-sysv openssh-server iptables \
       git gh rsync socat curl ca-certificates sudo iproute2 dnsutils netcat-openbsd \
-      nodejs npm python3-venv build-essential jq strace less \
+      nodejs npm python3-venv ruby build-essential jq strace less \
     && rm -rf /var/lib/apt/lists/*
 
 # A Mac boots the box with Ubuntu's own arm64 kernel, which build.sh takes
@@ -20,15 +20,17 @@ RUN if [ "$TARGETARCH" = arm64 ]; then \
       rm -rf /var/lib/apt/lists/* && echo vmw_vsock_virtio_transport > /etc/modules-load.d/vsock.conf; \
     fi
 
-# The user matches the build machine's, so ferry maps homes one to one.
-# ~/.local/bin goes on PATH in /etc/environment, which every ssh session reads,
-# not just login shells.
-RUN useradd -m -u "$UID" -s /bin/bash -G sudo "$USER" && \
+# The user matches the build machine's, so files keep their owners both ways,
+# and so does its home directory, even on a Mac (/Users/NAME): then every
+# absolute path bunk run copies in, in Claude's config and sessions or in a
+# repository, means the same thing in the box. ~/.local/bin goes on PATH in
+# /etc/environment, which every ssh session reads, not just login shells.
+RUN mkdir -p "$(dirname "$HOMEDIR")" && useradd -m -d "$HOMEDIR" -u "$UID" -s /bin/bash -G sudo "$USER" && \
     echo "$USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/box-user && \
-    install -d -o "$USER" -g "$USER" -m 700 /home/$USER/.ssh && \
-    install -d -o "$USER" -g "$USER" /home/$USER/.local /home/$USER/.local/bin /home/$USER/.config /home/$USER/.config/ferry /home/$USER/.claude && \
+    install -d -o "$USER" -g "$USER" -m 700 $HOMEDIR/.ssh && \
+    install -d -o "$USER" -g "$USER" $HOMEDIR/.local $HOMEDIR/.local/bin $HOMEDIR/.config $HOMEDIR/.claude && \
     mkdir -p /etc/bunk && echo "$USER" > /etc/bunk/user && \
-    sed -i "s|^PATH=\"|PATH=\"/home/$USER/.local/bin:|" /etc/environment
+    sed -i "s|^PATH=\"|PATH=\"$HOMEDIR/.local/bin:|" /etc/environment
 
 # Agents, at the versions pinned in versions (image/bump.sh). build.sh fetched
 # Rex's release archive and checked its sha256; Claude's installer checks the
@@ -40,12 +42,15 @@ USER $USER
 RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE"
 USER root
 
-# The box is the boundary: Claude runs without permission prompts. Onboarding
-# is marked done so the TUI skips its direct check of api.anthropic.com, and
-# the auto-mode nudge is marked seen so it doesn't wait on an answer.
-COPY --chown=$UID:$UID claude-settings.json /home/$USER/.claude/settings.json
+# What the box needs from Claude is managed settings, which outrank the user
+# settings bunk run copies in from the host: the model endpoint and sentinel
+# token, no permission prompts (the box is the boundary), and no updater.
+# Onboarding is marked done so the TUI skips its direct check of
+# api.anthropic.com, and the auto-mode nudge is marked seen so it doesn't
+# wait on an answer.
+COPY managed-settings.json /etc/claude-code/managed-settings.json
 RUN v=$(su - "$USER" -c 'claude --version' | cut -d' ' -f1) && \
-    su "$USER" -c "printf '{\"hasCompletedOnboarding\":true,\"lastOnboardingVersion\":\"%s\",\"hasSeenAutoDefaultNudge\":true}\n' $v > /home/$USER/.claude.json"
+    su "$USER" -c "printf '{\"hasCompletedOnboarding\":true,\"lastOnboardingVersion\":\"%s\",\"hasSeenAutoDefaultNudge\":true}\n' $v > $HOMEDIR/.claude.json"
 
 # Commits are made as the build machine's git user.
 COPY user.gitconfig /etc/bunk/gitconfig
@@ -57,10 +62,6 @@ COPY hallpass-etc/ /etc/hallpass/
 RUN ln -s hallpass /opt/hallpass/bin/hallpass-sign && \
     git config --system --add include.path /etc/hallpass/gitconfig
 
-# ferry, from the build machine, so it speaks the laptop's protocol; the
-# sandbox marker makes it answer agents' folder-trust prompts.
-COPY --chown=$UID:$UID ferry /home/$USER/.local/bin/ferry
-RUN touch /home/$USER/.config/ferry/sandbox && chown $UID:$UID /home/$USER/.config/ferry/sandbox
 
 # bunk's guest side: identity at boot, then every channel over vsock.
 # There is no network device; the host is vsock CID 2.

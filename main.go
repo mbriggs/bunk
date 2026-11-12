@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ const usage = `usage:
   bunk run CMD...    run CMD for this directory in its own box: copy the directory
                      in, run CMD there on this terminal, and copy the results back
   bunk rm --dir DIR  delete DIR's box
+  bunk ssh NAME [CMD...]  ssh into a box, or run CMD there
   bunk proxy NAME    connect stdin and stdout to the box's sshd (an ssh ProxyCommand)
 
 inside a box:
@@ -96,6 +98,20 @@ func run(args []string) error {
 			fmt.Println("removed", n)
 		}
 		return err
+	case cmd == "ssh" && len(rest) >= 1:
+		b, err := box.Open(rest[0])
+		if err != nil {
+			return err
+		}
+		cfg, err := b.SSHConfig()
+		if err != nil {
+			return err
+		}
+		ssh, err := exec.LookPath("ssh")
+		if err != nil {
+			return err
+		}
+		return syscall.Exec(ssh, append([]string{"ssh", "-F", cfg, b.Name}, rest[1:]...), os.Environ())
 	case cmd == "proxy" && len(rest) == 1:
 		return proxy(rest[0])
 	case cmd == "supervise" && len(rest) == 1:

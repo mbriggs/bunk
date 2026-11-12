@@ -1,13 +1,15 @@
 # bunk
 
-bunk runs throwaway sandbox VMs, called boxes, on a build machine: one box per task. A box has no network device. Everything it reaches goes over vsock to its supervisor on the host:
+bunk runs an agent in a sandbox VM, called a box, from a terminal on the build machine. Run `bunk run claude` in a worktree, in a Rex pane: bunk copies the worktree into the worktree's own box, runs Claude there on that terminal, and copies the results back when Claude exits. The pane stays in the machine's own Rex, so a box's agent shows up beside every other session.
 
-- sshd, which ferry and git use to get in.
+A box has no network device. Everything it reaches goes over vsock to its supervisor on the host:
+
 - An HTTPS proxy that allows only the names in an allowlist.
-- The Claude API, with the host's OAuth token swapped in for a sentinel, so no credential enters the box.
+- The Claude API, with the host's token swapped in for a sentinel, so no credential enters the box.
 - The host's hallpass broker, for git and gh against GitHub.
+- The host's clock, and sshd, which bunk uses to run commands and copy files.
 
-Inside, Claude runs without permission prompts, because the VM is the boundary. You hand a task in and out with `ferry to HOST --sandbox` and `ferry from TASK.HOST.box`.
+Inside, Claude runs without permission prompts, because the VM is the boundary. It has the host's instructions, settings, skills, and plugins, copied in each run.
 
 A Linux build machine runs boxes in Firecracker. A Mac runs them in vfkit (Virtualization.framework).
 
@@ -15,10 +17,10 @@ A Linux build machine runs boxes in Firecracker. A Mac runs them in vfkit (Virtu
 
 You need KVM, a home directory on btrfs or xfs (a box's disk is a reflink copy of the image), podman, and hallpass with your uid in its `uids`. Boxes share your hallpass.
 
-1. From this checkout on the laptop, install bunk on the build machine. The image also takes the build machine's `~/.local/bin/ferry`, which `ferry setup` or `ferry push` installs:
+1. From this checkout on the laptop, install bunk on the build machine. Install it beside the old binary and rename it into place, since a running box's supervisor keeps the old one open:
 
    ```sh
-   GOOS=linux GOARCH=amd64 go build -o bunk . && scp bunk HOST:.local/bin/
+   GOOS=linux GOARCH=amd64 go build -o bunk . && scp bunk HOST:.local/bin/bunk.new && ssh HOST mv .local/bin/bunk.new .local/bin/bunk
    ```
 
 2. On the build machine, install the pinned Firecracker and guest kernel into bunk's home, `~/.local/share/bunk`. The script checks both against their sha256:
@@ -27,15 +29,20 @@ You need KVM, a home directory on btrfs or xfs (a box's disk is a reflink copy o
    ./image/fetch-firecracker.sh
    ```
 
-3. Give boxes the allowlist, the mode, and the public keys that may log in to them. The mode is `allowlist`, or `open` to allow any name but GitHub's. Use the public half of the key the laptop's ssh config names below:
+3. Give boxes the allowlist and the mode. The mode is `allowlist`, or `open` to allow any name but GitHub's:
 
    ```sh
    cp allow.txt ~/.local/share/bunk/
    echo allowlist > ~/.local/share/bunk/mode
-   cat laptop_key.pub > ~/.local/share/bunk/authorized_keys
    ```
 
-4. Copy `image/` to the build machine, and build the image there. It takes about a minute:
+4. Give the model proxy a token. A machine where Claude doesn't run every day can't rely on Claude's own credentials, which expire within hours unless that Claude refreshes them. Make a token that lasts about a year with `claude setup-token`, on any machine, and save it on the build machine:
+
+   ```sh
+   umask 077 && cat > ~/.local/share/bunk/claude-token    # paste the token, then ^D
+   ```
+
+5. Copy `image/` to the build machine, and build the image there. It takes about a minute:
 
    ```sh
    ./image/build.sh
@@ -43,67 +50,56 @@ You need KVM, a home directory on btrfs or xfs (a box's disk is a reflink copy o
 
 ## Set up a Mac build machine
 
-You need vfkit (`brew install vfkit`), Docker (OrbStack works), Go, and checkouts of hallpass in `~/src/hallpass` and ferry in `~/src/ferry`, with `make dist` run in ferry. `build.sh` cross-builds bunk and hallpass for the box from those checkouts.
+You need vfkit (`brew install vfkit`), Docker (OrbStack works), Go, and a checkout of hallpass in `~/src/hallpass`. `build.sh` cross-builds bunk and hallpass for the box from the checkouts. The model proxy uses the Mac's own Claude credentials, from the Keychain.
 
-1. Build bunk in this checkout (`go build`), and install it in `~/.local/bin` or `~/.local/share/bunk/bin`. ferry looks in both.
-2. Give boxes the allowlist, mode, and `authorized_keys`, as in step 3 for Linux.
+1. Build bunk in this checkout (`go build`), and install it in `~/.local/bin` or `~/.local/share/bunk/bin`.
+2. Give boxes the allowlist and mode, as in step 3 for Linux.
 3. Build the image from this checkout. On a Mac it also writes the kernel (`Image`) and the empty initrd vfkit requires:
 
    ```sh
    ./image/build.sh
    ```
 
-## Set up the laptop
-
-Add one block per build machine to `~/.ssh/config`. It routes every box on that machine through `bunk proxy`. Replace the user, the build machine, and the key with yours:
-
-```
-Host *.kant.box
-  User mbriggs
-  IdentityFile ~/.ssh/box_key
-  IdentitiesOnly yes
-  UserKnownHostsFile ~/.ssh/bunk/%h
-  StrictHostKeyChecking yes
-  ProxyCommand ssh mbriggs@kant .local/bin/bunk proxy %h
-```
-
-For a box on the laptop itself, run bunk directly: `ProxyCommand ~/.local/share/bunk/bin/bunk proxy %h`. ferry pins each box's host key in a file of its own, `~/.ssh/bunk/NAME.HOST.box`, when it makes the box, so `StrictHostKeyChecking yes` never asks and parallel handoffs never share a file. ferry refuses a block whose `UserKnownHostsFile` doesn't end in `%h`.
-
 ## Use it
 
-To hand the current task to a fresh box on kant, run this in its worktree:
+In a worktree on the build machine, in a Rex pane:
 
 ```sh
-ferry to kant --sandbox
+bunk run claude
 ```
 
-ferry runs `bunk up` on kant to make a box named after the task: the worktree's name plus a short hash of its path, like `fix-auth-3f9c2a`. It moves the worktree and the Claude session in, and resumes Claude there in Rex. To bring the task back and delete its box, run this in the same worktree. ferry works out the box's name from the task, as it did on the way out:
+bunk finds the worktree's box, named for the worktree and a hash of its path (like `fix-auth-3f9c2a`), and makes and boots it the first time. Each run copies in the worktree, its git repository, Claude's sessions for the directory, and the host's Claude config, all to the same paths: the box's home is the host's, even on a Mac. When the command exits, bunk copies back the working tree, the branch, and Claude's sessions. `bunk run` takes any command: `bunk run npm test` works too.
 
-```sh
-ferry from kant --sandbox
+The copy back trusts the box with this worktree and nothing else. git objects only add. The branch moves only if nothing moved it on the host meanwhile. The rest of `.git`, such as hooks, config, and other branches, never comes back. If the branch moved, nothing but Claude's sessions comes back. bunk names the box's commit, which is already in the repository for you to merge or cherry-pick, and holds the box: the next `bunk run` there refuses instead of copying over it, until you `bunk rm --dir DIR`.
+
+The box stays between runs, so installed dependencies stay too. `bunk rm --dir DIR` deletes a directory's box. `bunk gc` deletes stopped boxes unused for a week, and stopped boxes whose directory is gone.
+
+### With ferry
+
+To have ferry start every agent on a build machine in its box, put the launch prefix in that machine's `~/.config/ferry/launch`:
+
+```
+bunk run
 ```
 
-To start new tasks in parallel, make a worktree for each and start Claude in a box with a prompt:
+ferry then starts `bunk run claude --resume ...` in a pane of the machine's Rex. While a box's Claude runs, bunk shows its session to the host as its own, with bunk's pid. So ferry sees it as live and busy as usual. Stopping it with SIGTERM ends Claude in the box and copies the work back before bunk exits, and only then does `ferry from` move the task.
 
-```sh
-git worktree add .claude/worktrees/fix-login -b fix-login
-cd .claude/worktrees/fix-login
-ferry to kant --sandbox --prompt "Fix the login redirect and commit it."
-```
+### Other commands
 
-`ferry from kant --sandbox`, run in that worktree, brings back the branch and the session Claude made.
-
-On the build machine, `bunk ls` lists boxes and `bunk rm NAME` deletes one. `bunk up NAME` makes a box, or starts it again if it exists.
+- `bunk ls` lists boxes, when each was last used, and how many run out of the limit.
+- `bunk ssh NAME [CMD...]` logs in to a box, or runs a command there.
+- `bunk up NAME` and `bunk rm NAME` make and delete a box by name, outside any directory.
+- At most 8 boxes run at once. Put another number in `~/.local/share/bunk/max-running` to change that.
 
 ## Check a box
 
-After changing the image, the kernel, or bunk, check a running box from the laptop:
+After changing the image, the kernel, or bunk, check a running box on its build machine:
 
 ```sh
-./check.sh NAME.kant.box
+bunk up c1 && ./check.sh c1; bunk rm c1
 ```
 
-Each line is one channel: egress, apt, the model endpoint, hallpass, the clock, and Claude editing and committing with no prompt. A line starts with `ok`, `FAIL`, or `skip`, and the exit status is the number of failures. `OFFLINE=1` skips the checks that need the build machine's Claude credentials or hallpass broker. CI (`.github/workflows/ci.yml`) boots a box in Firecracker on every push and runs the checks that way.
+Each line is one channel: egress, apt, the model endpoint, hallpass, the clock, and Claude editing and committing with no prompt. A line starts with `ok`, `FAIL`, or `skip`, and the exit status is the number of failures. `OFFLINE=1` skips the checks that need the build machine's Claude token or hallpass broker. CI (`.github/workflows/ci.yml`) boots a box in Firecracker on every push and runs the checks that way.
 
 ## Change the allowlist
 
@@ -114,15 +110,18 @@ Edit `~/.local/share/bunk/allow.txt` on the build machine. The next request read
 Each box lives in `~/.local/share/bunk/boxes/NAME`, which `bunk rm` deletes:
 
 - `disk.ext4`: the box's copy of the image.
-- `identity.tar`: a second disk with the box's hostname, its SSH host key, and `authorized_keys`, unpacked at boot.
-- `host_key.pub`: the host key, for known_hosts.
+- `identity.tar`: a second disk with the box's hostname, its SSH host key, and the keys that may log in, unpacked at boot.
+- `workdir`: the directory the box is for, if `bunk run` made it.
+- `ssh_config` and `known_hosts`: how bunk reaches the box, with its host key pinned.
 - `supervisor.log`: the supervisor's log, including egress decisions.
 - `vm.log`: the VM's console on Linux, and vfkit's own log on a Mac.
 - `console.log`: the VM's console on a Mac.
 - `v.sock*`: the vsock sockets, and `lock`, which the supervisor holds while it runs.
+- `unsynced`: present when a run's work didn't come back; it says why.
 
 ## Limits
 
 - Docker in a Firecracker box needs `--network host`. The CI kernel lacks the netfilter options Docker's bridge networking uses.
 - The image pins Claude, Codex, and Rex in `image/versions`. ferry won't move a session between different Claude versions in either direction, so the pins follow the laptop: when its Claude updates, run `./image/bump.sh` on the laptop, commit `image/versions`, and rebuild the image on each build machine.
-- If a Mac box's supervisor is killed, vfkit keeps running. On Linux the VM dies with its supervisor.
+- While a command runs, the box's copy of the worktree and the host's differ. Changes made on the host meanwhile are overwritten by the copy back, except to the branch, which bunk refuses to move.
+- Language-server plugins need their servers in the box, which the image doesn't have.

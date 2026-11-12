@@ -14,5 +14,6 @@ echo "$name" > /etc/hostname
 sed -i "s/^127\.0\.1\.1[[:space:]].*/127.0.1.1 $name/" /etc/hosts
 install -o root -g root -m 600 "$d/ssh_host_ed25519_key" /etc/ssh/ssh_host_ed25519_key
 install -o root -g root -m 644 "$d/ssh_host_ed25519_key.pub" /etc/ssh/ssh_host_ed25519_key.pub
-install -o "$user" -g "$user" -m 600 "$d/authorized_keys" "/home/$user/.ssh/authorized_keys"
+home=$(getent passwd "$user" | cut -d: -f6)
+install -o "$user" -g "$user" -m 600 "$d/authorized_keys" "$home/.ssh/authorized_keys"
 rm -rf "$d"

@@ -15,7 +15,6 @@ func testHome(t *testing.T) string {
 	t.Setenv("BUNK_HOME", home)
 	os.MkdirAll(filepath.Join(home, "image"), 0o755)
 	os.WriteFile(filepath.Join(home, "image", "rootfs.ext4"), []byte("not really ext4"), 0o644)
-	os.WriteFile(filepath.Join(home, "authorized_keys"), []byte("ssh-ed25519 AAAA test\n"), 0o644)
 	return home
 }
 

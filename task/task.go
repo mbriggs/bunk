@@ -5,8 +5,8 @@
 //
 // Everything is copied to the same absolute path in the box, so Claude's
 // sessions (keyed by path) and git's worktree links work unchanged. Copying
-// in mirrors the host: the worktree, its git repository, and Claude's session
-// folders for the directory. Copying out is narrower, because the box isn't
+// in mirrors the host: the worktree, its git repository, Claude's session
+// folders for the directory, and Claude's user config (claudeConfig). Copying out is narrower, because the box isn't
 // trusted to touch anything beyond this worktree:
 //
 //   - the working tree, but not .git;
@@ -169,6 +169,9 @@ func (w where) copyIn(s shell) (map[string]string, error) {
 			}
 		}
 	}
+	if err := copyClaudeConfig(s, home); err != nil {
+		return nil, err
+	}
 	// The box is the boundary, so Claude there trusts the directory instead
 	// of stopping at its trust prompt. Claude asks about the git top level.
 	trust := "f=~/.claude.json && jq --arg a " + quote(w.cwd) + " --arg b " + quote(w.root) +
@@ -183,6 +186,41 @@ func (w where) copyIn(s shell) (map[string]string, error) {
 		}
 	}
 	return refs, nil
+}
+
+// claudeConfig is the user-level Claude config bunk run copies into the box,
+// so Claude there has the host's instructions, settings, skills, and plugins.
+// It's config, not state: no credentials, history, or other sessions. Box
+// settings that matter (the model endpoint, no permission prompts) are
+// managed settings in the image, which outrank these.
+var claudeConfig = []string{"CLAUDE.md", "settings.json", "skills", "agents", "commands", "output-styles", "plugins"}
+
+// copyClaudeConfig copies the host's claudeConfig, and any statusline
+// script, into the box's ~/.claude. It follows symlinks, since config often
+// lives in a dotfiles repository the box doesn't have. It only goes in:
+// nothing the box does to it comes back.
+func copyClaudeConfig(s shell, home string) error {
+	names := claudeConfig
+	if extra, _ := filepath.Glob(filepath.Join(home, ".claude", "statusline*")); len(extra) > 0 {
+		for _, e := range extra {
+			names = append(names, filepath.Base(e))
+		}
+	}
+	for _, n := range names {
+		src := filepath.Join(home, ".claude", n)
+		fi, err := os.Stat(src) // follows a symlink
+		if err != nil {
+			continue
+		}
+		dst := s.host + ":.claude/" + n
+		if fi.IsDir() {
+			src, dst = src+"/", dst+"/"
+		}
+		if err := s.rsync(src, dst, "-L", "--delete"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // copyOut brings back what the box may change; see the package comment.

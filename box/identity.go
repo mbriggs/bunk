@@ -14,14 +14,15 @@ import (
 
 // writeIdentity makes the box's identity drive: a raw tar archive, attached as
 // a second disk, holding its hostname, a freshly generated SSH host key, and
-// the keys that may log in (Home()/authorized_keys, so the image carries no
-// one's keys). The guest's bunk-identity unit unpacks it before sshd
+// the keys that may log in: bunk's own, and any in Home()/authorized_keys.
+// The image carries no one's keys. The guest's bunk-identity unit unpacks it before sshd
 // starts. A tar needs no filesystem tools on the host, and its 512-byte
 // records are whole disk sectors. The public key is also kept beside it, for known_hosts.
 func writeIdentity(b Box) error {
+	// bunk logs in with its own key; Home()/authorized_keys may add others.
 	authorized, err := os.ReadFile(filepath.Join(Home(), "authorized_keys"))
-	if err != nil {
-		return fmt.Errorf("the keys that may log in to boxes: %w", err)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("the extra keys that may log in to boxes: %w", err)
 	}
 	own, err := clientKey()
 	if err != nil {
