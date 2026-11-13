@@ -15,6 +15,14 @@
 # itself, since macOS has no mkfs.ext4.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
+# In a lane, build into the lane's home, under the lane's own image tag. A
+# copy of image/ on a build machine has no loader, and no lanes.
+if [ -f "$here/../bin/worktree-env.sh" ]; then
+  . "$here/../bin/worktree-env.sh"
+  worktree_load "$here"
+fi
+tag=localhost/bunk-box${WORKTREE_LANE:+-lane-$WORKTREE_LANE}
+root=bunk-root${WORKTREE_LANE:+-lane-$WORKTREE_LANE}
 . "$here/versions"
 home=${BUNK_HOME:-$HOME/.local/share/bunk}
 work="$home/image/build"
@@ -26,7 +34,7 @@ ctx="$work/ctx"
 case $(uname -s) in
 Linux)
   C=podman PULL=--pull=newer
-  cp "${BUNK:-$HOME/.local/bin/bunk}" "$ctx/bunk"
+  cp "${BUNK:-${LANE_BUNK:-$HOME/.local/bin/bunk}}" "$ctx/bunk"
   cp "${HALLPASS:-/opt/hallpass/bin/hallpass}" "$ctx/hallpass"
   ;;
 Darwin)
@@ -57,21 +65,21 @@ sed 's|^http_unix_socket:.*|http_unix_socket: /run/hallpass/gh.sock|' "$hp/gh/co
 git config -f "$ctx/user.gitconfig" user.name "$(git config --global user.name)"
 git config -f "$ctx/user.gitconfig" user.email "$(git config --global user.email)"
 
-$C build -q $PULL -t localhost/bunk-box -f "$ctx/Containerfile" \
+$C build -q $PULL -t "$tag" -f "$ctx/Containerfile" \
   --build-arg USER="$(id -un)" --build-arg UID="$(id -u)" --build-arg HOMEDIR="$HOME" \
   --build-arg CLAUDE="$CLAUDE" --build-arg CODEX="$CODEX" "$ctx" >/dev/null
 
-$C rm -f bunk-root >/dev/null 2>&1 || true
-$C create --name bunk-root localhost/bunk-box >/dev/null
-$C export bunk-root > "$work/rootfs.tar"
-$C rm bunk-root >/dev/null
+$C rm -f "$root" >/dev/null 2>&1 || true
+$C create --name "$root" "$tag" >/dev/null
+$C export "$root" > "$work/rootfs.tar"
+$C rm "$root" >/dev/null
 # podman and docker own /etc/hosts, /etc/hostname, and /etc/resolv.conf in a
 # container, so they're written here. Each box renames itself at boot, and
 # has no resolver: it reaches names only through the proxy.
 # The tree is unpacked inside the container, not in the shared $work: a Mac
 # folder mounted into Docker doesn't keep Linux file owners, and a home
 # directory owned by root makes sshd refuse every login.
-$C run --rm -v "$work:/w" localhost/bunk-box sh -euc '
+$C run --rm -v "$work:/w" "$tag" sh -euc '
   mkdir /r
   tar -x -p -C /r -f /w/rootfs.tar
   rm /w/rootfs.tar
@@ -87,4 +95,9 @@ if [ "$(uname -s)" = Darwin ]; then
   : | cpio -o -H newc --quiet > "$home/image/initrd.cpio"
 fi
 mv "$work/rootfs.ext4" "$home/image/rootfs.ext4"
+# What this image was built from, for bin/verify, and the tag a lane's
+# teardown removes.
+"$here/guest-key.sh" > "$home/image/guest-key" 2>/dev/null || rm -f "$home/image/guest-key"
+[ -s "$home/image/guest-key" ] || rm -f "$home/image/guest-key"
+if [ -n "${WORKTREE_LANE:-}" ]; then echo "$tag" > "$home/image/tag"; fi
 echo "rootfs.ext4: $(du -h "$home/image/rootfs.ext4" | cut -f1) used"

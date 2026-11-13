@@ -1,0 +1,76 @@
+#!/bin/sh
+# bin/verify: the landing check. It runs what CI runs (gofmt, vet, the tests),
+# then boots a box with a bunk built from this checkout and runs check.sh on
+# it, with the checks that need the Claude token and the hallpass broker.
+#
+# When every check passes, it writes HEAD's tree to a file named verified in
+# the run's directory, $BUNK_HOME/verify/RUN/, beside the run's log.
+# bin/worktree land looks for that stamp. It stamps the committed tree, so it
+# refuses to start with anything uncommitted.
+#
+# In a lane it uses the lane's bunk home, and rebuilds the lane's image first
+# when the image wasn't built from this tree's image/ and guest code. In the
+# primary it only says the image is stale.
+#
+# OFFLINE=1 skips the checks that need the token or the broker, as in CI, and
+# writes no stamp.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/worktree-env.sh"
+worktree_load "$here"
+cd "$here/.."
+
+if [ -n "$(git status --porcelain)" ]; then
+  git status --short >&2
+  echo "bin/verify: commit or remove these first; the run stamps the committed tree" >&2
+  exit 1
+fi
+
+home=${BUNK_HOME:-$HOME/.local/share/bunk}
+run=$home/verify/$(date +%Y%m%d-%H%M%S)-$$
+mkdir -p "$run"
+bin=${LANE_BUNK:-$run/bunk}
+box=verify-$$
+
+checks() {
+  set -e
+  echo "== gofmt, vet, test"
+  unformatted=$(gofmt -l .)
+  [ -z "$unformatted" ] || { echo "gofmt would change: $unformatted"; return 1; }
+  go vet ./...
+  GOOS=linux go vet ./...
+  go test ./...
+
+  echo "== bunk, from this checkout"
+  go build -o "$bin" .
+
+  key=$(image/guest-key.sh)
+  if [ ! -f "$home/image/rootfs.ext4" ] || [ "$(cat "$home/image/guest-key" 2>/dev/null)" != "$key" ]; then
+    if [ -z "${WORKTREE_LANE:-}" ]; then
+      echo "the image in $home wasn't built from this tree's image/ and guest code. Run ./image/build.sh, then bin/verify again."
+      return 1
+    fi
+    echo "== the lane's image, rebuilt from this checkout"
+    # On Linux the image takes the host's bunk; on a Mac build.sh cross-builds it.
+    if [ "$(uname -s)" = Linux ]; then BUNK=$bin ./image/build.sh; else ./image/build.sh; fi
+  fi
+
+  echo "== a box"
+  "$bin" up "$box" >/dev/null
+  BUNK=$bin ./check.sh "$box"
+}
+
+trap '"$bin" rm "$box" >/dev/null 2>&1 || true; rm -f "$run/bunk"' EXIT
+# The status goes through a file: a pipeline's status is tee's. The subshell
+# isn't a condition, so set -e stays in force inside checks.
+{ set +e; (checks); echo $? > "$run/status"; } 2>&1 | tee "$run/log"
+if [ "$(cat "$run/status")" != 0 ]; then
+  echo "bin/verify: FAILED; the log is $run/log" >&2
+  exit 1
+fi
+if [ -n "${OFFLINE:-}" ]; then
+  echo "bin/verify: passed offline, so it wrote no stamp"
+  exit 0
+fi
+git rev-parse 'HEAD^{tree}' > "$run/verified"
+echo "bin/verify: passed; stamped $run/verified"

@@ -1,2 +1,5 @@
 image/bunk
 image/ferry
+worktree.env
+.claude/worktrees/
+tmp/
