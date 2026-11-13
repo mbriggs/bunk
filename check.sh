@@ -21,6 +21,9 @@ check "clock within 5s of registry.npmjs.org's" sh -c 'd=$(curl -sI https://regi
 check "egress allows registry.npmjs.org" sh -c '[ "$(curl -s -o /dev/null -w %{http_code} https://registry.npmjs.org/)" = 200 ]'
 check "egress refuses example.com"      sh -c '! curl -sf -o /dev/null https://example.com/'
 check "egress refuses github.com"       sh -c '! curl -sf -o /dev/null https://github.com/'
+check "egress allows a CfT download"    sh -c '[ "$(curl -sI -o /dev/null -w %{http_code} https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.18/linux64/chrome-linux64.zip)" = 200 ]'
+check "egress refuses other buckets"    sh -c 'curl -s https://storage.googleapis.com/some-other-bucket/x | grep -q "bunk: refused"'
+check "egress refuses writes to CfT"    sh -c 'curl -s -X PUT --data x https://storage.googleapis.com/chrome-for-testing-public/x | grep -q "bunk: refused"'
 check "apt through the proxy"           sudo apt-get update -qq
 online "hallpass: git clone"             sh -c 'rm -rf /tmp/c-hp && git clone -q --depth 1 git@github.com:mbriggs/hallpass.git /tmp/c-hp'
 online "hallpass: gh api"                /opt/hallpass/bin/hallpass gh api repos/mbriggs/hallpass --jq .full_name

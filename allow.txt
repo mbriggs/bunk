@@ -1,4 +1,4 @@
-# The default allowlist: what the census of real workloads (npm, pip, Go, Rust, apt, Playwright, Prisma, Docker) needed. A leading dot matches subdomains; a leading ~ is a regexp matched against the whole name.
+# The default allowlist: what the census of real workloads (npm, pip, Go, Rust, apt, Playwright, Prisma, Docker) needed. A leading dot matches subdomains; a leading ~ is a regexp matched against the whole name; NAME/PATH/ allows only GETs under that path on NAME.
 # Claude, which signs in with the user's own token
 api.anthropic.com
 # Codex, signed in with ChatGPT: its requests, sign-in refresh, and API
@@ -29,9 +29,11 @@ cdn.playwright.dev
 playwright.download.prss.microsoft.com
 # prisma engines
 binaries.prisma.sh
-# left out on purpose: storage.googleapis.com (shared, writable), checkpoint.prisma.io (telemetry), *.prisma.build (per-run names)
-# Playwright Chrome for Testing. Shared, writable by anyone with a bucket: an exfil channel.
-storage.googleapis.com
+# left out on purpose: the rest of storage.googleapis.com (shared, writable), checkpoint.prisma.io (telemetry), *.prisma.build (per-run names)
+# Playwright's Chrome for Testing: cdn.playwright.dev redirects to this bucket.
+# The host is shared and anyone can write to it, so only GETs under this path,
+# which the proxy checks by inspecting the host's TLS.
+storage.googleapis.com/chrome-for-testing-public/
 # docker hub
 registry-1.docker.io
 auth.docker.io

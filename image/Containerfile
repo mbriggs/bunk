@@ -81,10 +81,12 @@ RUN rm -f /etc/ssh/ssh_host_* && \
 # Everything reaches the internet through the proxy, including sudo, apt, and
 # Docker. npm sets its own GIT_SSH_COMMAND, so it's pinned to hallpass here.
 # Docker needs iptables' legacy backend: Firecracker's CI kernel has no nf_tables.
+# Node keeps its own CA list, so it's pointed at the system's too, which has
+# the egress CA (see bunk-identity).
 RUN p=http://127.0.0.1:3128 && \
-    printf "HTTPS_PROXY=$p\nHTTP_PROXY=$p\nhttps_proxy=$p\nhttp_proxy=$p\nNO_PROXY=localhost,127.0.0.1\nno_proxy=localhost,127.0.0.1\nGIT_SSH_COMMAND=/opt/hallpass/bin/hallpass ssh\n" >> /etc/environment && \
+    printf "HTTPS_PROXY=$p\nHTTP_PROXY=$p\nhttps_proxy=$p\nhttp_proxy=$p\nNO_PROXY=localhost,127.0.0.1\nno_proxy=localhost,127.0.0.1\nGIT_SSH_COMMAND=/opt/hallpass/bin/hallpass ssh\nNODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt\n" >> /etc/environment && \
     printf "Acquire::http::Proxy \"$p\";\nAcquire::https::Proxy \"$p\";\n" > /etc/apt/apt.conf.d/90bunk-proxy && \
-    printf 'Defaults env_keep += "HTTPS_PROXY HTTP_PROXY https_proxy http_proxy NO_PROXY no_proxy GIT_SSH_COMMAND"\n' > /etc/sudoers.d/bunk-proxy && \
+    printf 'Defaults env_keep += "HTTPS_PROXY HTTP_PROXY https_proxy http_proxy NO_PROXY no_proxy GIT_SSH_COMMAND NODE_EXTRA_CA_CERTS"\n' > /etc/sudoers.d/bunk-proxy && \
     mkdir -p /etc/systemd/system/docker.service.d && \
     printf "[Service]\nEnvironment=HTTPS_PROXY=$p HTTP_PROXY=$p NO_PROXY=localhost,127.0.0.1\n" > /etc/systemd/system/docker.service.d/proxy.conf && \
     update-alternatives --set iptables /usr/sbin/iptables-legacy && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy

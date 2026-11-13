@@ -45,6 +45,11 @@ type channel struct {
 
 func (b Box) channels() []channel {
 	policy := egress.Policy{AllowFile: filepath.Join(Home(), "allow.txt"), ModeFile: filepath.Join(Home(), "mode")}
+	if ca, err := egress.LoadCA(Home()); err == nil {
+		policy.CA = ca
+	} else {
+		log.Printf("egress: no CA, so hosts the allowlist limits to paths are refused: %v", err)
+	}
 	cs := []channel{
 		{portReady, b.serveReady},
 		{portClock, clock.Serve},
