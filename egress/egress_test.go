@@ -2,6 +2,7 @@ package egress
 
 import (
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +49,22 @@ func TestOpenModeStillGuardsGitHub(t *testing.T) {
 	} {
 		if got := p.Refusal(name) == ""; got != allow {
 			t.Errorf("open: Refusal(%q) allowed=%v, want %v", name, got, allow)
+		}
+	}
+}
+
+// The resolver hands a literal address back IPv4-mapped, and a name's
+// addresses plain. Either way, only a public one is dialed.
+func TestPublic(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"104.20.23.154": true, "::ffff:104.20.23.154": true,
+		"100.100.100.100": false, "::ffff:100.100.100.100": false,
+		"10.0.0.5": false, "::ffff:10.0.0.5": false,
+		"127.0.0.1": false, "::ffff:127.0.0.1": false,
+		"169.254.169.254": false, "::ffff:169.254.169.254": false,
+	} {
+		if got := public(netip.MustParseAddr(addr)); got != want {
+			t.Errorf("public(%s) = %v, want %v", addr, got, want)
 		}
 	}
 }

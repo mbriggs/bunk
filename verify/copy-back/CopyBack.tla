@@ -250,15 +250,15 @@ RmRemoves ==
 ----------------------------------------------------------------------------
 (* bunk gc: box.GC, for this box. It can run again. *)
 
-\* `if b.Running() { continue }`, with the box old enough for gc (unused for
-\* its age, or its directory gone). Unless GcRaces, gc runs while no bunk run
-\* or bunk rm --dir is partway through, and the b.Remove that follows is part
-\* of the same step.
+\* `if b.Running() { ...; continue }` and `if exists(b.path("unsynced")) {
+\* continue }`, with the box old enough for gc (unused for its age, or its
+\* directory gone). Unless GcRaces, gc runs while no bunk run or bunk rm --dir
+\* is partway through, and the b.Remove that follows is part of the same step.
 Quiet == rmPc = "start" /\ \A r \in Runs : pc[r] \in {"start", "done"}
 
 GcLooks ==
   /\ gcPc = "look"
-  /\ exists /\ ~running
+  /\ exists /\ ~running /\ ~unsynced
   /\ IF GcRaces
        THEN gcPc' = "remove" /\ UNCHANGED <<box, harm>>
        ELSE Quiet /\ RemoveBox("GcNeverRemovesHeldWork") /\ UNCHANGED gcPc

@@ -212,17 +212,16 @@ func (b Box) Touch() { os.WriteFile(b.path("used"), nil, 0o600) }
 
 // GC removes the stopped boxes not used for at least age, and the stopped
 // boxes whose workdir is gone, and returns their names. It never touches a
-// running box: one may hold work that hasn't been handed back yet.
-func GC(age time.Duration) ([]string, error) {
+// running box, which may be in use, and returns the ones as long unused as
+// idle: stopping one is the caller's to decide (Stop). Nor does it remove a
+// box that holds work that didn't come back (task.Run's unsynced file),
+// however old.
+func GC(age time.Duration) (removed, idle []string, err error) {
 	boxes, err := List()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var removed []string
 	for _, b := range boxes {
-		if b.Running() {
-			continue
-		}
 		dirGone := false
 		if w := b.Workdir(); w != "" {
 			_, err := os.Stat(w)
@@ -231,12 +230,19 @@ func GC(age time.Duration) ([]string, error) {
 		if !dirGone && time.Since(b.LastUsed()) < age {
 			continue
 		}
+		if b.Running() {
+			idle = append(idle, b.Name)
+			continue
+		}
+		if exists(b.path("unsynced")) {
+			continue
+		}
 		if err := b.Remove(); err != nil {
-			return removed, err
+			return removed, idle, err
 		}
 		removed = append(removed, b.Name)
 	}
-	return removed, nil
+	return removed, idle, nil
 }
 
 // List returns the boxes that exist, in name order.

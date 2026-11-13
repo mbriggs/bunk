@@ -53,13 +53,17 @@ func (w where) copyCodexIn(s shell, home string) ([]byte, error) {
 		}
 	}
 	// The box's own copy of config.toml, so trusting the directory here
-	// changes nothing on the host.
-	var trust strings.Builder
-	for _, d := range uniq(w.cwd, w.root) {
-		fmt.Fprintf(&trust, "\n[projects.%s]\ntrust_level = \"trusted\"\n", strconv.Quote(d))
+	// changes nothing on the host. It's added to the host's config, which the
+	// copy above just put there. A host with none left the box's last one in
+	// place, trust and all, so that one is written again from nothing: a
+	// table named twice is a TOML error.
+	raw, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	into := "cat >> ~/.codex/config.toml"
+	if err != nil {
+		into = "cat > ~/.codex/config.toml"
 	}
-	trust.WriteString(hookTrust(home))
-	if err := s.pipe("cat >> ~/.codex/config.toml", trust.String()); err != nil {
+	cfg := string(raw)
+	if err := s.pipe(into, projectTrust(cfg, uniq(w.cwd, w.root))+hookTrust(cfg, home)); err != nil {
 		return nil, err
 	}
 	if w.agent != "codex" {
@@ -100,6 +104,20 @@ func copyCodexOut(s shell, home string, auth []byte) error {
 	return box.SaveSecret("codex-auth", []byte(now))
 }
 
+// projectTrust is the config.toml tables that trust dirs, for adding to cfg,
+// the host's config. A directory cfg already has a table for gets none.
+func projectTrust(cfg string, dirs []string) string {
+	var out strings.Builder
+	for _, d := range dirs {
+		table := "[projects." + strconv.Quote(d) + "]"
+		if strings.Contains(cfg, table) {
+			continue
+		}
+		fmt.Fprintf(&out, "\n%s\ntrust_level = \"trusted\"\n", table)
+	}
+	return out.String()
+}
+
 // trustedHook is one hook config.toml trusts: the hook's place in its
 // hooks.json (the key after the path) and the hash Codex trusted.
 var trustedHook = regexp.MustCompile(`(?m)^\[hooks\.state\."(.*?)/\.codex/hooks\.json:([^"]*)"\]\s*\ntrusted_hash = "([^"]*)"`)
@@ -111,12 +129,7 @@ var trustedHook = regexp.MustCompile(`(?m)^\[hooks\.state\."(.*?)/\.codex/hooks\
 // told to trust. The hash covers the hook, not the path, so the same hook in
 // the box's hooks.json gets the same hash, at the box's path (its home is
 // the host's).
-func hookTrust(home string) string {
-	raw, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
-	if err != nil {
-		return ""
-	}
-	cfg := string(raw)
+func hookTrust(cfg, home string) string {
 	var out strings.Builder
 	added := map[string]bool{}
 	for _, m := range trustedHook.FindAllStringSubmatch(cfg, -1) {

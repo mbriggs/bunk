@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,23 +57,45 @@ func clientKey() ([]byte, error) {
 	if raw, err := os.ReadFile(path + ".pub"); err == nil {
 		return raw, nil
 	}
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		block, err := ssh.MarshalPrivateKey(priv, "bunk")
+		if err != nil {
+			return nil, err
+		}
+		// Linked into place, so two boxes made at once agree on one key: the
+		// second's link fails, and it reads the first's.
+		tmp, err := os.CreateTemp(Home(), ".id_ed25519-*")
+		if err != nil {
+			return nil, err
+		}
+		defer os.Remove(tmp.Name())
+		_, err = tmp.Write(pem.EncodeToMemory(block))
+		if cerr := tmp.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := os.Link(tmp.Name(), path); err != nil && !errors.Is(err, os.ErrExist) {
+			return nil, err
+		}
+	}
+	// The public half is always read from the private key in place, so the
+	// two can't be from different keys.
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	block, err := ssh.MarshalPrivateKey(priv, "bunk")
+	signer, err := ssh.ParsePrivateKey(raw)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	sshPub, err := ssh.NewPublicKey(pub)
-	if err != nil {
-		return nil, err
-	}
-	line := ssh.MarshalAuthorizedKey(sshPub)
-	if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
-		return nil, err
-	}
-	return line, os.WriteFile(path+".pub", line, 0o644)
+	line := ssh.MarshalAuthorizedKey(signer.PublicKey())
+	return line, writeFileAtomic(path+".pub", line)
 }
 
 // SSHConfig writes an ssh config that reaches the box as host NAME, through
