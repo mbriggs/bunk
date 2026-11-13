@@ -155,6 +155,11 @@ func up(name string) error {
 		}
 		return err
 	}
+	// A box made by name is for trying things by hand, such as check.sh,
+	// so its Claude is signed in for as long as it runs.
+	if err := b.GiveClaudeToken(); err != nil {
+		return err
+	}
 	key, err := b.HostKey()
 	if err != nil {
 		return err
