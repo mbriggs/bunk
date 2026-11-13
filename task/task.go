@@ -45,7 +45,18 @@ type where struct {
 	common string   // the repository's shared git directory
 	claude []string // Claude's session folders, relative to home
 
+	agent     string // "claude" or "codex" when the command runs one of them
 	codexAuth []byte // the Codex login copyIn gave the box, for copyOut
+}
+
+// agent names the agent argv runs, "claude" or "codex", or "" for any other
+// command. It decides which credential the box gets.
+func agent(argv []string) string {
+	switch n := filepath.Base(argv[0]); n {
+	case "claude", "codex":
+		return n
+	}
+	return ""
 }
 
 // Run runs argv in dir's box and returns its exit status.
@@ -92,6 +103,21 @@ func Run(dir string, argv []string) (int, error) {
 	}
 	s := shell{cfg: cfg, host: b.Name}
 
+	// Each agent's credential is in the box only while that agent runs
+	// there, so a box running anything else, or between runs, has none.
+	w.agent = agent(argv)
+	defer func() {
+		b.TakeClaudeToken()
+		s.run("rm -f ~/.codex/auth.json")
+	}()
+	if w.agent == "claude" {
+		err = b.GiveClaudeToken()
+	} else {
+		err = b.TakeClaudeToken()
+	}
+	if err != nil {
+		return 1, err
+	}
 	refs, err := w.copyIn(s)
 	if err != nil {
 		return 1, fmt.Errorf("copying %s into box %s: %w", w.root, b.Name, err)

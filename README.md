@@ -8,7 +8,7 @@ A box has no network device. Everything it reaches goes over vsock to its superv
 - The host's hallpass broker, for git and gh against GitHub.
 - The host's clock, and sshd, which bunk uses to run commands and copy files.
 
-Inside, Claude runs without permission prompts, because the VM is the boundary. It has the host's instructions, settings, skills, and plugins, copied in each run, and signs in with your own token from `claude setup-token`, which bunk gives each box when it starts. The allowlist lets it reach `api.anthropic.com`. The token is in the box, so a box gone wrong could use it: revoke it at claude.ai if that happens.
+Inside, Claude runs without permission prompts, because the VM is the boundary. It has the host's instructions, settings, skills, and plugins, copied in each run, and signs in with your own token from `claude setup-token`. bunk puts the token in a box only while `bunk run claude` runs there, and takes it out after, so a box running anything else, or sitting idle, has no credential. The allowlist lets it reach `api.anthropic.com`. While Claude runs, a box gone wrong could use the token: revoke it at claude.ai if that happens.
 
 A Linux build machine runs boxes in Firecracker. A Mac runs them in vfkit (Virtualization.framework).
 
@@ -91,7 +91,7 @@ A box's Codex signs in with a ChatGPT login of bunk's own, apart from the host's
 bunk codex-login
 ```
 
-It runs `codex login` in a scratch box, so the host needs no Codex of its own, and keeps the login where it keeps secrets: the Keychain on a Mac, systemd-creds on Linux. When a box's Codex refreshes the login, bunk keeps the refreshed copy. Several boxes refreshing at the same moment can still sign it out; `bunk codex-login` again fixes that.
+It runs `codex login` in a scratch box, so the host needs no Codex of its own, and keeps the login where it keeps secrets: the Keychain on a Mac, systemd-creds on Linux. Like Claude's token, the login is in a box only while `bunk run codex` runs there. When a box's Codex refreshes the login, bunk keeps the refreshed copy. Several boxes refreshing at the same moment can still sign it out; `bunk codex-login` again fixes that.
 
 ### With ferry
 
@@ -113,7 +113,7 @@ ferry then starts `bunk run claude --resume ...` in a pane of the machine's Rex.
 
 - `bunk ls` lists boxes, when each was last used, and how many run out of the limit.
 - `bunk ssh NAME [CMD...]` logs in to a box, or runs a command there.
-- `bunk up NAME` and `bunk rm NAME` make and delete a box by name, outside any directory.
+- `bunk up NAME` and `bunk rm NAME` make and delete a box by name, outside any directory. A box made this way is for trying things by hand, such as `check.sh`, so it has the Claude token for as long as it runs.
 - At most 8 boxes run at once. Put another number in `~/.local/share/bunk/max-running` to change that.
 
 ## Check a box

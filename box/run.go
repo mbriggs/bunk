@@ -233,7 +233,7 @@ func (b Box) Up() error {
 			return fmt.Errorf("%w; see %s, and bunk rm %s", err, b.path("vm.log"), b.Name)
 		}
 	}
-	return b.installClaudeToken()
+	return nil
 }
 
 // serveReady marks the box ready when the guest connects, which it does once

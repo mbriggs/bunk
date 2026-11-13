@@ -26,8 +26,9 @@ import (
 // it.
 var codexConfig = []string{"AGENTS.md", "config.toml", "hooks.json", "rules", "skills", "prompts", "plugins"}
 
-// copyCodexIn copies Codex's config, sessions, and login into the box, marks
-// the task's directories trusted there, and returns the login it copied.
+// copyCodexIn copies Codex's config and sessions into the box, and marks the
+// task's directories trusted there. When the command is Codex, it copies the
+// login in too, and returns it.
 func (w where) copyCodexIn(s shell, home string) ([]byte, error) {
 	if _, err := s.run("mkdir -p ~/.codex/sessions"); err != nil {
 		return nil, err
@@ -59,6 +60,10 @@ func (w where) copyCodexIn(s shell, home string) ([]byte, error) {
 	}
 	trust.WriteString(hookTrust(home))
 	if err := s.pipe("cat >> ~/.codex/config.toml", trust.String()); err != nil {
+		return nil, err
+	}
+	if w.agent != "codex" {
+		_, err := s.run("rm -f ~/.codex/auth.json")
 		return nil, err
 	}
 	auth, err := box.LoadSecret("codex-auth")
