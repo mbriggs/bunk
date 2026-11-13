@@ -1,0 +1,244 @@
+#!/bin/sh
+# bunkv: drive this checkout's bunk in a scratch BUNK_HOME, apart from the
+# installed bunk and its boxes, and record what happened as evidence.
+#
+#   bunkv launch [--build-image]   make a run directory and print it
+#   BUNKV=DIR bunkv doctor         is this run worth driving? (read-only)
+#   BUNKV=DIR bunkv repo NAME      make a scratch git repository, print its path
+#   BUNKV=DIR bunkv do LABEL CMD.. run CMD with this run's bunk, recording it
+#   BUNKV=DIR bunkv evidence       print the evidence directory
+#   BUNKV=DIR bunkv cleanup        remove the run's boxes and the run directory
+#
+# A run directory is /tmp/bunkv-XXXXXX:
+#   bin/bunk   built from this checkout
+#   home/      BUNK_HOME: the image, allow.txt, mode, and the run's boxes
+#   w/         scratch worktrees (bunkv repo)
+# Evidence is outside it, in ~/.cache/bunk-verify/<run name>/ (or under
+# $BUNKV_EVIDENCE), and cleanup leaves it alone.
+set -eu
+
+checkout=$(cd "$(dirname "$0")/../../.." && pwd)
+installed=${BUNKV_INSTALLED:-$HOME/.local/share/bunk}
+os=$(uname -s)
+
+die() { echo "bunkv: $*" >&2; exit 1; }
+
+# need_run checks that $BUNKV is a run directory this script made.
+need_run() {
+  [ -n "${BUNKV:-}" ] || die "set BUNKV to the directory bunkv launch printed"
+  case $BUNKV in /tmp/bunkv-* | /private/tmp/bunkv-*) ;; *) die "$BUNKV isn't a bunkv run directory" ;; esac
+  [ -f "$BUNKV/.bunkv" ] || die "$BUNKV isn't a bunkv run directory (no .bunkv marker)"
+  evid=${BUNKV_EVIDENCE:-$HOME/.cache/bunk-verify}/$(basename "$BUNKV")
+  export BUNK_HOME="$BUNKV/home" BUNK="$BUNKV/bin/bunk" PATH="$BUNKV/bin:$PATH"
+  lane_keep "$BUNK"
+}
+
+# lane_keep makes check.sh and image/build.sh keep this run's BUNK_HOME when
+# the checkout is a lane (the worktree skill). Their loader replaces BUNK_HOME
+# with the lane's unless the caller already names the same lane.
+lane_keep() {
+  [ -f "$checkout/worktree.env" ] || return 0
+  WORKTREE_LANE=$(sed -n 's/^WORKTREE_LANE=//p' "$checkout/worktree.env")
+  LANE_BUNK=$1
+  export WORKTREE_LANE LANE_BUNK
+}
+
+# rev names the checkout's commit, for the evidence.
+rev() { git -C "$checkout" rev-parse --short HEAD; }
+
+# srchash is a hash of what bin/bunk is built from: every Go file git tracks
+# or would track, and the module files. Other lanes' checkouts under
+# .claude/worktrees are ignored by git, so they don't count.
+srchash() {
+  (cd "$checkout" && git ls-files -z --cached --others --exclude-standard -- '*.go' go.mod go.sum |
+    xargs -0 cat 2>/dev/null | git hash-object --stdin)
+}
+
+# copy clones a file where the filesystem can, and copies it sparsely where not.
+copy() {
+  if [ "$os" = Darwin ]; then cp -c "$1" "$2"; else cp --reflink=auto --sparse=always "$1" "$2"; fi
+}
+
+launch() {
+  build_image=
+  [ "${1:-}" = --build-image ] && build_image=1
+  # Short, because a box's sockets live under it and a socket path is capped
+  # at 104 bytes on a Mac. Resolved, so it's the path git and bunk report.
+  run=$(cd "$(mktemp -d /tmp/bunkv-XXXXXX)" && pwd -P)
+  : > "$run/.bunkv"
+  mkdir -p "$run/bin" "$run/home/image" "$run/w"
+  (cd "$checkout" && CGO_ENABLED=0 go build -o "$run/bin/bunk" .) || { rm -rf "$run"; die "the checkout doesn't build"; }
+  rev > "$run/built-from"
+  srchash > "$run/built-src"
+  cp "$checkout/allow.txt" "$run/home/allow.txt"
+  echo allowlist > "$run/home/mode"
+  if [ "$os" = Linux ]; then
+    # Firecracker and the guest kernel are fetched, not built: reuse them.
+    mkdir -p "$run/home/bin"
+    cp "$installed/bin/firecracker" "$run/home/bin/" || die "no Firecracker in $installed (image/fetch-firecracker.sh)"
+    copy "$installed/image/vmlinux" "$run/home/image/vmlinux"
+  fi
+  if [ -n "$build_image" ]; then
+    # On Linux build.sh takes the host's installed bunk unless told otherwise.
+    lane_keep "$run/bin/bunk"
+    if [ "$os" = Linux ]; then
+      BUNK_HOME="$run/home" BUNK="$run/bin/bunk" "$checkout/image/build.sh" >&2
+    else
+      BUNK_HOME="$run/home" "$checkout/image/build.sh" >&2
+    fi || { rm -rf "$run"; die "image/build.sh failed"; }
+    echo "built from this checkout ($(rev))" > "$run/image-from"
+  else
+    [ -f "$installed/image/rootfs.ext4" ] || { rm -rf "$run"; die "no image in $installed/image: use launch --build-image"; }
+    for f in rootfs.ext4 Image initrd.cpio; do
+      [ -f "$installed/image/$f" ] && copy "$installed/image/$f" "$run/home/image/$f"
+    done
+    echo "cloned from $installed/image (guest side is that image's, not this checkout's)" > "$run/image-from"
+  fi
+  echo "$run"
+}
+
+doctor() {
+  need_run
+  fails=0
+  ok() { echo "ok    $*"; }
+  bad() { echo "FAIL  $*"; fails=$((fails + 1)); }
+  note() { echo "note  $*"; }
+
+  if [ -x "$BUNKV/bin/bunk" ]; then
+    if [ "$(cat "$BUNKV/built-src")" = "$(srchash)" ]; then ok "bin/bunk is this checkout's (built at $(cat "$BUNKV/built-from"), Go source unchanged since)"
+    else bad "the checkout's Go source changed since bin/bunk was built (launch a new run)"; fi
+  else
+    bad "no $BUNKV/bin/bunk"
+  fi
+
+  want="rootfs.ext4"
+  if [ "$os" = Darwin ]; then want="$want Image initrd.cpio"; else want="$want vmlinux"; fi
+  missing=
+  for f in $want; do [ -f "$BUNK_HOME/image/$f" ] || missing="$missing $f"; done
+  if [ -z "$missing" ]; then ok "image: $(cat "$BUNKV/image-from")"; else bad "image is missing:$missing"; fi
+
+  if [ "$os" = Darwin ]; then
+    if command -v vfkit >/dev/null; then ok "vfkit: $(command -v vfkit)"; else bad "vfkit isn't on PATH (brew install vfkit)"; fi
+  else
+    if [ -x "$BUNK_HOME/bin/firecracker" ]; then ok "firecracker: $BUNK_HOME/bin/firecracker"; else bad "no $BUNK_HOME/bin/firecracker"; fi
+    if [ -w /dev/kvm ]; then ok "/dev/kvm is writable"; else bad "/dev/kvm isn't writable"; fi
+  fi
+
+  if [ "$(cat "$BUNK_HOME/mode" 2>/dev/null)" = allowlist ] && [ -s "$BUNK_HOME/allow.txt" ]; then
+    ok "egress: allowlist mode, $(grep -cv '^#' "$BUNK_HOME/allow.txt") names"
+  else
+    bad "egress: $BUNK_HOME/mode or allow.txt isn't as launch left it"
+  fi
+
+  # What the online checks need. Neither is a failure: they decide OFFLINE.
+  if [ "$os" = Darwin ]; then
+    hp=/var/db/hallpass/run
+    security find-generic-password -s bunk-claude-token >/dev/null 2>&1 && tok=1 || tok=
+  else
+    hp=/run/hallpass
+    { [ -f "$installed/claude-token.cred" ] || [ -f "$installed/claude-token" ]; } && tok=1 || tok=
+  fi
+  if [ "$os" = Darwin ] && [ -n "$tok" ]; then note "Claude token: in the Keychain, so boxes here sign in as the user"
+  elif [ -n "$tok" ]; then note "Claude token: in $installed, not in this run's home; boxes here aren't signed in"
+  else note "Claude token: none; boxes here aren't signed in (use OFFLINE=1)"; fi
+  if [ -S "$hp/hallpass.sock" ]; then note "hallpass broker: $hp, the user's real one (a box can reach GitHub as the user)"
+  else note "hallpass broker: none at $hp (use OFFLINE=1)"; fi
+  note "Codex login: none in this run's home, on purpose"
+
+  # Each running box's supervisor must be this run's binary.
+  for d in "$BUNK_HOME"/boxes/*/; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    if [ -f "$d/pid" ] && kill -0 "$(cat "$d/pid")" 2>/dev/null; then
+      cmd=$(ps -o command= -p "$(cat "$d/pid")")
+      case $cmd in
+      "$BUNKV/bin/bunk supervise $name"*) ok "box $name: running, supervisor $(cat "$d/pid") is this run's" ;;
+      *) bad "box $name: pid $(cat "$d/pid") is '$cmd', not this run's supervisor" ;;
+      esac
+    else
+      note "box $name: stopped$([ -f "$d/unsynced" ] && echo ', holds work that did not come back')"
+    fi
+  done
+  note "evidence: $evid"
+  [ "$fails" = 0 ] || echo "$fails failed" >&2
+  exit "$fails"
+}
+
+repo() {
+  need_run
+  [ -n "${1:-}" ] || die "usage: bunkv repo NAME"
+  dir="$BUNKV/w/$1"
+  [ ! -e "$dir" ] || die "$dir exists"
+  mkdir -p "$dir"
+  git -C "$dir" init -q -b main
+  echo "seed" > "$dir/README"
+  git -C "$dir" add README
+  git -C "$dir" -c user.name=bunkv -c user.email=bunkv@example.invalid -c commit.gpgsign=false commit -qm seed
+  echo "$dir"
+}
+
+# do_ runs a command and appends it, its output, and its exit status to the
+# evidence. stdout and stderr are recorded together, in the order they came.
+do_() {
+  need_run
+  [ $# -ge 2 ] || die "usage: bunkv do LABEL CMD..."
+  label=$1
+  shift
+  mkdir -p "$evid"
+  n=$(find "$evid" -maxdepth 1 -name '[0-9][0-9]-*.txt' | wc -l | tr -d ' ')
+  out=$(printf '%s/%02d-%s.txt' "$evid" $((n + 1)) "$label")
+  {
+    echo "# $(date -u +%Y-%m-%dT%H:%M:%SZ)  bunk $(cat "$BUNKV/built-from")  $(uname -sm)"
+    echo "# cwd: $(pwd -P)"
+    printf '$'
+    for a in "$@"; do case $a in *[!A-Za-z0-9_./:=@%+,-]* | '') printf " '%s'" "$(printf %s "$a" | sed "s/'/'\\\\''/g")" ;; *) printf ' %s' "$a" ;; esac; done
+    echo
+  } > "$out"
+  # sh has no PIPESTATUS, so the command's status goes by way of a file.
+  st=$(mktemp "$evid/.status.XXXXXX")
+  { "$@" 2>&1 || echo $? > "$st"; } | tee -a "$out"
+  status=$(cat "$st")
+  rm -f "$st"
+  status=${status:-0}
+  echo "# exit: $status" >> "$out"
+  return "$status"
+}
+
+cleanup() {
+  need_run
+  left=0
+  for d in "$BUNK_HOME"/boxes/*/; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    case $name in *.new) rm -rf "$d"; continue ;; esac
+    # By name, so a box that holds work or is mid-run goes too. bunk stops
+    # the supervisor by the pid and lock in the box's own directory.
+    if "$BUNK" rm "$name"; then echo "removed box $name"; else echo "bunkv: couldn't remove box $name" >&2; left=1; fi
+  done
+  [ "$left" = 0 ] || die "boxes remain in $BUNK_HOME/boxes; the run directory is kept"
+  # bunk run copies Claude's session folder for each scratch worktree back to
+  # the host. They belong to this run: keep them as evidence, off the host.
+  slug=$(printf %s "$BUNKV/w" | sed 's/[^a-zA-Z0-9]/-/g')
+  for s in "$HOME/.claude/projects/$slug"*; do
+    [ -d "$s" ] || continue
+    if [ -n "$(ls -A "$s")" ]; then
+      mkdir -p "$evid/claude-sessions"
+      mv "$s" "$evid/claude-sessions/"
+    else
+      rmdir "$s"
+    fi
+  done
+  rm -rf "$BUNKV"
+  echo "removed $BUNKV"
+  if [ -d "$evid" ]; then echo "evidence kept in $evid"; else echo "no evidence was recorded"; fi
+}
+
+case ${1:-} in
+launch) shift; launch "$@" ;;
+doctor) doctor ;;
+repo) shift; repo "$@" ;;
+do) shift; do_ "$@" ;;
+evidence) need_run; echo "$evid" ;;
+cleanup) cleanup ;;
+*) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+esac
