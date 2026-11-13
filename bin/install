@@ -1,0 +1,124 @@
+#!/bin/sh
+# bin/install: put this checkout's bunk and box image where they run.
+#
+#   bin/install            here: build bunk into bunk's home, and rebuild the
+#                          image if it wasn't built from this tree
+#   bin/install HOST...    the same on Linux build machines, over ssh
+#   bin/install --all      here, then every machine listed in
+#                          ~/.local/share/bunk/machines (one ssh host a line)
+#
+# Each step is skipped when it's already done, so running it again is cheap,
+# and a run that failed partway can be repeated. It never touches a machine's
+# allow.txt if it has one, since that file is edited there; it says when it
+# differs from this checkout's. It ends by naming the boxes made from an older
+# image, which keep their old disk until they're removed.
+#
+# In a lane, the first form installs into the lane's own home. The others
+# refuse: a lane's code doesn't go to the build machines.
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/worktree-env.sh"
+worktree_load "$here"
+cd "$here/.."
+
+die() { echo "bin/install: $*" >&2; exit 1; }
+say() { echo "== $*"; }
+
+home=${BUNK_HOME:-$HOME/.local/share/bunk}
+key=$(image/guest-key.sh)
+[ -n "$key" ] || die "this isn't a git checkout of bunk"
+
+# stale_boxes HOME: the names of HOME's boxes whose disk predates its image.
+# It's one line of sh, so it runs here and over ssh alike.
+stale_boxes='for d in "$h"/boxes/*/; do [ -f "$d/disk.ext4" ] && [ "$h/image/rootfs.ext4" -nt "$d/disk.ext4" ] && basename "$d"; done; true'
+
+report_stale() { # report_stale WHERE NAMES RM
+  [ -n "$2" ] || return 0
+  echo "$1: these boxes were made from an older image and keep it until removed ($3):"
+  echo "$2" | sed 's/^/  /'
+}
+
+install_here() {
+  say "here: bunk into $home/bin"
+  mkdir -p "$home/bin"
+  # Renamed into place: a running box's supervisor keeps the old binary open.
+  go build -o "$home/bin/bunk.new" .
+  mv -f "$home/bin/bunk.new" "$home/bin/bunk"
+  if [ ! -f "$home/allow.txt" ]; then
+    cp allow.txt "$home/allow.txt"
+    [ -f "$home/mode" ] || echo allowlist > "$home/mode"
+  elif ! cmp -s allow.txt "$home/allow.txt"; then
+    echo "here: $home/allow.txt differs from this checkout's allow.txt; left as it is"
+  fi
+  if [ -f "$home/image/rootfs.ext4" ] && [ "$(cat "$home/image/guest-key" 2>/dev/null)" = "$key" ]; then
+    say "here: the image is current"
+  else
+    say "here: the image, from this checkout"
+    if [ "$(uname -s)" = Linux ]; then BUNK=$home/bin/bunk ./image/build.sh; else ./image/build.sh; fi
+  fi
+  report_stale here "$(h=$home; eval "$stale_boxes")" "bunk rm NAME"
+}
+
+install_on() {
+  host=$1
+  info=$(ssh "$host" 'uname -sm') || die "$host: ssh failed"
+  case $info in
+    "Linux x86_64") arch=amd64 ;;
+    "Linux aarch64") arch=arm64 ;;
+    *) die "$host is '$info'; only Linux build machines are installed over ssh" ;;
+  esac
+  say "$host: bunk into ~/.local/bin"
+  GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -o "$tmp/bunk-$arch" .
+  ssh "$host" 'mkdir -p .local/bin .local/share/bunk/src'
+  scp -q "$tmp/bunk-$arch" "$host:.local/bin/bunk.new"
+  ssh "$host" 'mv -f .local/bin/bunk.new .local/bin/bunk'
+
+  if ! ssh "$host" 'test -f .local/share/bunk/allow.txt'; then
+    scp -q allow.txt "$host:.local/share/bunk/allow.txt"
+    ssh "$host" 'test -f .local/share/bunk/mode || echo allowlist > .local/share/bunk/mode'
+  elif ! ssh "$host" 'cat .local/share/bunk/allow.txt' | cmp -s - allow.txt; then
+    echo "$host: its allow.txt differs from this checkout's; left as it is"
+  fi
+
+  if ! ssh "$host" 'test -x .local/share/bunk/bin/firecracker && test -f .local/share/bunk/image/vmlinux'; then
+    say "$host: Firecracker and the guest kernel"
+    ssh "$host" 'sh -s' < image/fetch-firecracker.sh
+  fi
+
+  if [ "$(ssh "$host" 'test -f .local/share/bunk/image/rootfs.ext4 && cat .local/share/bunk/image/guest-key 2>/dev/null' || true)" = "$key" ]; then
+    say "$host: the image is current"
+  else
+    say "$host: the image, from this checkout"
+    rsync -a --delete image/ "$host:.local/share/bunk/src/image/"
+    ssh "$host" '.local/share/bunk/src/image/build.sh'
+    # The machine's copy of image/ isn't a git checkout, so build.sh there
+    # can't say what it built from.
+    ssh "$host" "echo $key > .local/share/bunk/image/guest-key"
+  fi
+  # shellcheck disable=SC2029 # stale_boxes is meant to expand here
+  report_stale "$host" "$(ssh "$host" "h=\$HOME/.local/share/bunk; $stale_boxes")" "bunk rm NAME, on $host"
+}
+
+command -v go >/dev/null || die "go isn't on PATH"
+hosts=
+here_too=
+case ${1:-} in
+  '') here_too=1 ;;
+  --all)
+    [ $# -eq 1 ] || die "--all takes no hosts"
+    here_too=1
+    if [ -f "$home/machines" ]; then hosts=$(sed 's/#.*//' "$home/machines"); fi
+    ;;
+  -*) sed -n '2,/^$/s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+  *) hosts=$* ;;
+esac
+if [ -n "$hosts" ]; then bin/worktree guard --deny "bin/install on a build machine"; fi
+
+if [ -n "$here_too" ]; then install_here; fi
+if [ -n "$hosts" ]; then
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  for host in $hosts; do install_on "$host"; done
+elif [ "${1:-}" = --all ]; then
+  echo "no machines listed in $home/machines; list one ssh host a line to include them"
+fi

@@ -15,9 +15,8 @@
 LANE_MAX=9
 LANDING=pr
 MERGE=yes
-# The Mac's live bunk. A running box's supervisor keeps the old binary open,
-# so the new one is renamed into place.
-INSTALL='go build -o "$HOME/.local/share/bunk/bin/bunk.new" . && mv -f "$HOME/.local/share/bunk/bin/bunk.new" "$HOME/.local/share/bunk/bin/bunk"'
+# This machine's live bunk and image (see bin/install).
+INSTALL=bin/install
 VERIFY=bin/verify
 STAMPS='${BUNK_HOME:-$HOME/.local/share/bunk}/verify/*/verified'
 
@@ -111,17 +110,11 @@ lane_info() {
   fi
 }
 
-# After the Mac's bunk is installed: say what else runs the old code.
+# After bin/install brought this machine up to date: say when the build
+# machines run older code.
 lane_installed() {
-  if [ -z "$1" ]; then
-    echo "installed bunk here. If the image or a Linux build machine predates this commit, rebuild or reinstall it (README)."
-    return 0
-  fi
   # shellcheck disable=SC2086 # GUEST_PATHS is a list of pathspecs
-  if ! git diff --quiet "$1" "$2" -- $GUEST_PATHS; then
-    echo "THE IMAGE IS STALE: this merge changed what the box image is built from. Run ./image/build.sh here, and rebuild the image on each build machine."
-  fi
-  if ! git diff --quiet "$1" "$2" -- '*.go' go.mod go.sum; then
-    echo "bunk changed: reinstall it on each Linux build machine (README, step 1)."
+  if [ -z "$1" ] || ! git diff --quiet "$1" "$2" -- '*.go' go.mod go.sum $GUEST_PATHS; then
+    echo "THE BUILD MACHINES ARE STALE: this merge changed bunk or its image. Run bin/install --all (or bin/install HOST)."
   fi
 }

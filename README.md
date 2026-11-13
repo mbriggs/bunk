@@ -12,60 +12,47 @@ Inside, Claude runs without permission prompts, because the VM is the boundary. 
 
 A Linux build machine runs boxes in Firecracker. A Mac runs them in vfkit (Virtualization.framework).
 
-## Set up a Linux build machine
+## Set up a build machine
+
+`bin/install` puts this checkout's bunk and box image where they run. Each step is skipped when it's already done, so run it again after any change to bunk or `image/`:
+
+```sh
+bin/install            # this machine
+bin/install HOST...    # Linux build machines, over ssh
+bin/install --all      # this machine, then every host in ~/.local/share/bunk/machines
+```
+
+It builds bunk and renames it into place, since a running box's supervisor keeps the old binary open. It gives a machine with no allowlist this checkout's `allow.txt` in `allowlist` mode, and leaves an existing one alone. It rebuilds the image, which takes about a minute, only when the image wasn't built from this tree's `image/` and guest code. Boxes made from an older image keep it until they're removed, and `bin/install` names them.
+
+List your build machines, one ssh host a line, in `~/.local/share/bunk/machines`, and `bin/install --all` after a merge brings everything up to date.
+
+The mode in `~/.local/share/bunk/mode` is `allowlist`, or `open` to allow any name but GitHub's.
+
+### A Linux build machine
 
 You need KVM, podman, and hallpass with your uid in its `uids`. On btrfs or xfs a box's disk is an instant reflink copy of the image; elsewhere it's a sparse copy, which takes a few seconds. Boxes share your hallpass.
 
-1. From this checkout on the laptop, install bunk on the build machine. Install it beside the old binary and rename it into place, since a running box's supervisor keeps the old one open:
+1. Give boxes a Claude token, from `claude setup-token`, encrypted with systemd-creds under the machine's key and TPM, so it isn't on disk in the clear. This reads the token from stdin, here from 1Password:
 
    ```sh
-   GOOS=linux GOARCH=amd64 go build -o bunk . && scp bunk HOST:.local/bin/bunk.new && ssh HOST mv .local/bin/bunk.new .local/bin/bunk
-   ```
-
-2. On the build machine, install the pinned Firecracker and guest kernel into bunk's home, `~/.local/share/bunk`. The script checks both against their sha256:
-
-   ```sh
-   ./image/fetch-firecracker.sh
-   ```
-
-3. Give boxes the allowlist and the mode. The mode is `allowlist`, or `open` to allow any name but GitHub's:
-
-   ```sh
-   cp allow.txt ~/.local/share/bunk/
-   echo allowlist > ~/.local/share/bunk/mode
-   ```
-
-4. Give boxes a Claude token, from `claude setup-token`, encrypted with systemd-creds under the machine's key and TPM, so it isn't on disk in the clear. This reads the token from stdin, here from 1Password:
-
-   ```sh
-   op read "op://Private/Claude Long OAuth/credential" | ssh HOST 'umask 077 && systemd-creds encrypt --user --with-key=host+tpm2 --name=bunk-claude-token - ~/.local/share/bunk/claude-token.cred'
+   op read "op://Private/Claude Long OAuth/credential" | ssh HOST 'umask 077 && mkdir -p ~/.local/share/bunk && systemd-creds encrypt --user --with-key=host+tpm2 --name=bunk-claude-token - ~/.local/share/bunk/claude-token.cred'
    ```
 
    Without systemd-creds, a plain `~/.local/share/bunk/claude-token`, mode 0600, works too.
 
-5. Copy `image/` to the build machine, and build the image there. It takes about a minute:
+2. From this checkout on the laptop, run `bin/install HOST`. It installs bunk in `~/.local/bin`, the pinned Firecracker and guest kernel in bunk's home, `~/.local/share/bunk`, checked against their sha256, and the image, built on the machine from a copy of `image/`.
 
-   ```sh
-   ./image/build.sh
-   ```
-
-## Set up a Mac build machine
+### A Mac build machine
 
 You need vfkit (`brew install vfkit`), Docker (OrbStack works), Go, and a checkout of hallpass in `~/src/hallpass`. `build.sh` cross-builds bunk and hallpass for the box from the checkouts.
 
-1. Build bunk in this checkout (`go build`), and install it in `~/.local/bin` or `~/.local/share/bunk/bin`.
-2. Give boxes the allowlist and the mode, as in step 3 for Linux.
-3. Give boxes a Claude token, from `claude setup-token`, in the login Keychain. This asks for the token instead of taking it on the command line:
+1. Give boxes a Claude token, from `claude setup-token`, in the login Keychain. This asks for the token instead of taking it on the command line:
 
    ```sh
    security add-generic-password -U -s bunk-claude-token -a "$USER" -w
    ```
 
-4. Build the image from this checkout. On a Mac it also writes the kernel (`Image`) and the empty initrd vfkit requires:
-
-   ```sh
-   ./image/build.sh
-   ```
+2. Run `bin/install` in this checkout. It installs bunk in `~/.local/share/bunk/bin`, which goes on your `PATH`, and builds the image, with the kernel (`Image`) and the empty initrd vfkit requires.
 
 ## Use it
 
