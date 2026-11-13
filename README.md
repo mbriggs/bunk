@@ -130,12 +130,14 @@ Each line is one channel: egress, apt, hallpass, the clock, and Claude signing i
 
 Edit `~/.local/share/bunk/allow.txt` on the build machine. The next request reads it. A line is a name, `.domain` for a domain and its subdomains, or `~regexp`, which must match the whole name. Each box's `supervisor.log` lists refused names. GitHub's own names are always refused, because git and gh reach GitHub only through hallpass.
 
+The proxy sees only names, since a box's HTTPS is a tunnel it can't read. That's not enough for a shared host anyone can write to, like `storage.googleapis.com`, where allowing the name would let a box send data to a bucket of its own. So a line can be a name and a path instead, like `storage.googleapis.com/chrome-for-testing-public/`. For that host alone, the proxy ends the box's TLS itself, with a certificate from bunk's CA, and sends on only GETs and HEADs under the paths listed. bunk makes the CA the first time it needs it, in `~/.local/share/bunk/egress-ca.pem`, and each box trusts it from its identity drive, so a box made before the CA existed can't use path lines until it's remade. The CA's key stays on the host. Node gets the system's CAs through `NODE_EXTRA_CA_CERTS`; a tool with a CA list of its own, like Python's `certifi`, would need pointing at `/etc/ssl/certs/ca-certificates.crt` too.
+
 ## What's in a box's directory
 
 Each box lives in `~/.local/share/bunk/boxes/NAME`, which `bunk rm` deletes:
 
 - `disk.ext4`: the box's copy of the image.
-- `identity.tar`: a second disk with the box's hostname, its SSH host key, and the keys that may log in, unpacked at boot.
+- `identity.tar`: a second disk with the box's hostname, its SSH host key, the keys that may log in, and the egress CA's certificate, unpacked at boot.
 - `workdir`: the directory the box is for, if `bunk run` made it.
 - `ssh_config` and `known_hosts`: how bunk reaches the box, with its host key pinned.
 - `supervisor.log`: the supervisor's log, including egress decisions.

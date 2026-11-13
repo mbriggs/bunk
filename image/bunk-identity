@@ -1,5 +1,6 @@
 #!/bin/sh
-# Take this box's hostname, SSH host key, and authorized_keys from its
+# Take this box's hostname, SSH host key, authorized_keys, and the egress
+# CA's certificate from its
 # identity drive, a raw tar archive on /dev/vdb that bunk writes when it
 # creates the box.
 set -eux
@@ -16,4 +17,10 @@ install -o root -g root -m 600 "$d/ssh_host_ed25519_key" /etc/ssh/ssh_host_ed255
 install -o root -g root -m 644 "$d/ssh_host_ed25519_key.pub" /etc/ssh/ssh_host_ed25519_key.pub
 home=$(getent passwd "$user" | cut -d: -f6)
 install -o "$user" -g "$user" -m 600 "$d/authorized_keys" "$home/.ssh/authorized_keys"
+# The proxy shows this CA's certificates for hosts it inspects (see
+# allow.txt's path entries).
+if [ -f "$d/egress-ca.crt" ]; then
+  install -m 644 "$d/egress-ca.crt" /usr/local/share/ca-certificates/bunk-egress.crt
+  update-ca-certificates >/dev/null
+fi
 rm -rf "$d"

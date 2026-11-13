@@ -1,8 +1,10 @@
 package egress
 
 import (
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -46,6 +48,44 @@ func TestOpenModeStillGuardsGitHub(t *testing.T) {
 	} {
 		if got := p.Refusal(name) == ""; got != allow {
 			t.Errorf("open: Refusal(%q) allowed=%v, want %v", name, got, allow)
+		}
+	}
+}
+
+func TestPaths(t *testing.T) {
+	dir := t.TempDir()
+	p := Policy{AllowFile: filepath.Join(dir, "allow.txt"), ModeFile: filepath.Join(dir, "mode")}
+	os.WriteFile(p.AllowFile, []byte("Storage.googleapis.com/chrome-for-testing-public  # CfT\nexample.com/a/\ngithub.com/x/\n"), 0o644)
+	if p.Refusal("storage.googleapis.com") == "" {
+		t.Error("a path entry allowed its whole host")
+	}
+	if got := p.Paths("storage.googleapis.com"); len(got) != 1 || got[0] != "/chrome-for-testing-public/" {
+		t.Errorf("Paths = %q", got)
+	}
+	if got := p.Paths("github.com"); got != nil {
+		t.Errorf("Paths(github.com) = %q, want none", got)
+	}
+	paths := []string{"/chrome-for-testing-public/"}
+	for _, c := range []struct {
+		method, target string
+		body           string
+		allow          bool
+	}{
+		{"GET", "/chrome-for-testing-public/158/linux64/chrome-linux64.zip", "", true},
+		{"HEAD", "/chrome-for-testing-public/158/x.zip?alt=media", "", true},
+		{"PUT", "/chrome-for-testing-public/x", "", false},
+		{"POST", "/upload/storage/v1/b/evil/o", "", false},
+		{"GET", "/chrome-for-testing-public", "", false},
+		{"GET", "/chrome-for-testing-public-evil/x", "", false},
+		{"GET", "/evil-bucket/secret", "", false},
+		{"GET", "/chrome-for-testing-public/../evil/x", "", false},
+		{"GET", "/chrome-for-testing-public/%2e%2e/evil/x", "", false},
+		{"GET", "/chrome-for-testing-public%2F..%2Fevil/x", "", false},
+		{"GET", "/chrome-for-testing-public/x", "data", false},
+	} {
+		req := httptest.NewRequest(c.method, "https://storage.googleapis.com"+c.target, strings.NewReader(c.body))
+		if got := pathRefusal(req, paths) == ""; got != c.allow {
+			t.Errorf("%s %s allowed=%v, want %v", c.method, c.target, got, c.allow)
 		}
 	}
 }

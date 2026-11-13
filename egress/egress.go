@@ -28,6 +28,7 @@ import (
 type Policy struct {
 	AllowFile string // the allowlist
 	ModeFile  string // "open" allows any name but GitHub's; anything else means allowlist only
+	CA        *CA    // for the hosts the allowlist limits to paths; nil refuses them
 }
 
 // GitHub goes through hallpass only. These names are refused in every mode
@@ -60,7 +61,7 @@ func (p Policy) listed(name string) bool {
 		e, _, _ := strings.Cut(line, "#")
 		e = strings.ToLower(strings.TrimSpace(e))
 		switch {
-		case e == "":
+		case e == "", strings.Contains(e, "/"): // a path entry; see Paths
 		case strings.HasPrefix(e, "~"):
 			if hostPattern(e[1:]).MatchString(name) {
 				return true
@@ -75,6 +76,29 @@ func (p Policy) listed(name string) bool {
 // hostPattern compiles a "~REGEXP" entry anchored at both ends, so
 // `~[a-z0-9]+\.ewr\.prisma\.build` can't match x.ewr.prisma.build.example.com.
 // An entry that doesn't compile matches nothing and is logged.
+// Paths returns the paths the allowlist allows on name, from entries like
+// storage.googleapis.com/chrome-for-testing-public/, when the name isn't
+// allowed outright. Each is a prefix, from the first slash. GitHub gets
+// none, as ever. A path is a directory: an entry ending without a slash
+// gets one.
+func (p Policy) Paths(name string) []string {
+	name = strings.ToLower(strings.TrimSuffix(name, "."))
+	if hardRefused[name] || strings.HasSuffix(name, ".github.com") || strings.HasSuffix(name, ".githubusercontent.com") {
+		return nil
+	}
+	raw, _ := os.ReadFile(p.AllowFile)
+	var paths []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		e, _, _ := strings.Cut(line, "#")
+		host, path, ok := strings.Cut(strings.TrimSpace(e), "/")
+		if ok && strings.ToLower(host) == name {
+			// A directory, so .../public/ can't match .../public-evil/.
+			paths = append(paths, "/"+strings.TrimSuffix(path, "/")+"/")
+		}
+	}
+	return paths
+}
+
 func hostPattern(expr string) *regexp.Regexp {
 	re, err := regexp.Compile(`^(?:` + expr + `)$`)
 	if err != nil {
@@ -122,6 +146,10 @@ func (p Policy) handle(c net.Conn) {
 		host = h
 	}
 	if why := p.Refusal(host); why != "" {
+		if paths := p.Paths(host); len(paths) > 0 && p.CA != nil && req.Method == http.MethodConnect {
+			p.inspect(bufConn{c, br}, host, paths)
+			return
+		}
 		refuse(c, host, why)
 		return
 	}
