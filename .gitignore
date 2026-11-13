@@ -3,3 +3,4 @@ image/ferry
 worktree.env
 .claude/worktrees/
 tmp/
+verify/copy-back/out/

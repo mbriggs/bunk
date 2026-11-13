@@ -77,7 +77,7 @@ bunk run claude
 
 bunk finds the worktree's box, named for the worktree and a hash of its path (like `fix-auth-3f9c2a`), and makes and boots it the first time. Each run copies in the worktree, its git repository, Claude's sessions for the directory, and the host's Claude config, all to the same paths: the box's home is the host's, even on a Mac. When the command exits, bunk copies back the working tree, the branch, and Claude's sessions. `bunk run` takes any command: `bunk run npm test` works too.
 
-The copy back trusts the box with this worktree and nothing else. git objects only add. The branch moves only if nothing moved it on the host meanwhile. The rest of `.git`, such as hooks, config, and other branches, never comes back. If the branch moved, nothing but Claude's sessions comes back. bunk names the box's commit, which is already in the repository for you to merge or cherry-pick, and holds the box: the next `bunk run` there refuses instead of copying over it, until you `bunk rm --dir DIR`.
+The copy back trusts the box with this worktree and nothing else. git objects only add. The branch moves only if nothing moved it on the host meanwhile. The rest of `.git`, such as hooks, config, and other branches, never comes back. If the branch moved, nothing but Claude's sessions comes back. bunk names the box's commit, which is already in the repository for you to merge or cherry-pick, and holds the box: the next `bunk run` there refuses instead of copying over it, until you `bunk rm --dir DIR`. A box is held the same way when its `bunk run` dies before the copy back is done.
 
 The box stays between runs, so installed dependencies stay too. `bunk rm --dir DIR` deletes a directory's box. It refuses while a `bunk run` is using the box, or while the box holds work that didn't come back, unless you add `--force`. `bunk gc` deletes stopped boxes unused for a week, and stopped boxes whose directory is gone.
 
@@ -142,7 +142,7 @@ Each box lives in `~/.local/share/bunk/boxes/NAME`, which `bunk rm` deletes:
 - `vm.log`: the VM's console on Linux, and vfkit's own log on a Mac.
 - `console.log`: the VM's console on a Mac.
 - `v.sock*`: the vsock sockets, and `lock`, which the supervisor holds while it runs.
-- `unsynced`: present when a run's work didn't come back; it says why.
+- `unsynced`: present from when a run's command starts until its work is back, so it stays when the work didn't come back; it says why.
 
 ## Limits
 
