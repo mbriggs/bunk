@@ -1,0 +1,5 @@
+# Codex in a box: the VM is the boundary, so Codex neither asks before it acts
+# nor runs commands in a sandbox of its own. These outrank the user's
+# config.toml, which bunk run copies in from the host.
+approval_policy = "never"
+sandbox_mode = "danger-full-access"

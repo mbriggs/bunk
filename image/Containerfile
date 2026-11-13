@@ -50,6 +50,7 @@ USER root
 # api.anthropic.com, and the auto-mode nudge is marked seen so it doesn't
 # wait on an answer.
 COPY managed-settings.json /etc/claude-code/managed-settings.json
+COPY codex-managed-config.toml /etc/codex/managed_config.toml
 RUN v=$(su - "$USER" -c 'claude --version' | cut -d' ' -f1) && \
     su "$USER" -c "printf '{\"hasCompletedOnboarding\":true,\"lastOnboardingVersion\":\"%s\",\"hasSeenAutoDefaultNudge\":true}\n' $v > $HOMEDIR/.claude.json"
 

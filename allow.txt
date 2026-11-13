@@ -1,6 +1,10 @@
 # The default allowlist: what the census of real workloads (npm, pip, Go, Rust, apt, Playwright, Prisma, Docker) needed. A leading dot matches subdomains; a leading ~ is a regexp matched against the whole name.
 # Claude, which signs in with the user's own token
 api.anthropic.com
+# Codex, signed in with ChatGPT: its requests, sign-in refresh, and API
+chatgpt.com
+auth.openai.com
+api.openai.com
 # npm, node
 registry.npmjs.org
 nodejs.org

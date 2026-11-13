@@ -34,6 +34,7 @@ const usage = `usage:
   bunk rm --dir DIR [--force]  delete DIR's box, unless a bunk run is using it
                      or it holds work that didn't come back
   bunk ssh NAME [CMD...]  ssh into a box, or run CMD there
+  bunk codex-login   sign Codex in for boxes, with a device code
   bunk proxy NAME    connect stdin and stdout to the box's sshd (an ssh ProxyCommand)
 
 inside a box:
@@ -96,6 +97,8 @@ func run(args []string) error {
 			fmt.Println("removed", n)
 		}
 		return err
+	case cmd == "codex-login" && len(rest) == 0:
+		return box.CodexLogin()
 	case cmd == "ssh" && len(rest) >= 1:
 		b, err := box.Open(rest[0])
 		if err != nil {
