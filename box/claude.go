@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// A box's Claude signs in with the user's own token from `claude setup-token`
-// (see claudeToken for where the host keeps it), which bunk puts in the box's
+// A box's Claude signs in with the user's own token from `claude setup-token`,
+// the secret "claude-token" (see LoadSecret), which bunk puts in the box's
 // managed Claude settings each time the box starts. Claude Code itself then authenticates, as on any
 // machine; nothing between it and Anthropic holds or swaps the credential.
 // The token is in the box, so a box that went wrong could use it: revoke it
@@ -18,7 +18,8 @@ import (
 // sent on ssh's stdin, never in a command line. Without a token it does
 // nothing, and Claude in the box isn't signed in.
 func (b Box) installClaudeToken() error {
-	tok, err := claudeToken()
+	raw, err := LoadSecret("claude-token")
+	tok := strings.TrimSpace(string(raw))
 	if err != nil || tok == "" {
 		return err
 	}

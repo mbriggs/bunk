@@ -44,6 +44,8 @@ type where struct {
 	gitDir string   // the worktree's own git directory; "" outside git
 	common string   // the repository's shared git directory
 	claude []string // Claude's session folders, relative to home
+
+	codexAuth []byte // the Codex login copyIn gave the box, for copyOut
 }
 
 // Run runs argv in dir's box and returns its exit status.
@@ -141,7 +143,7 @@ func claudeSlug(dir string) string { return nonAlnum.ReplaceAllString(dir, "-") 
 
 // copyIn makes the box's copies match the host's, and returns the host's
 // branches as they were, for copyOut to check against.
-func (w where) copyIn(s shell) (map[string]string, error) {
+func (w *where) copyIn(s shell) (map[string]string, error) {
 	dirs := []string{w.root}
 	if w.common != "" && !inside(w.common, w.root) {
 		dirs = append(dirs, w.common)
@@ -174,6 +176,11 @@ func (w where) copyIn(s shell) (map[string]string, error) {
 	if err := copyClaudeConfig(s, home); err != nil {
 		return nil, err
 	}
+	auth, err := w.copyCodexIn(s, home)
+	if err != nil {
+		return nil, err
+	}
+	w.codexAuth = auth
 	// The box is the boundary, so Claude there trusts the directory instead
 	// of stopping at its trust prompt. Claude asks about the git top level.
 	trust := "f=~/.claude.json && jq --arg a " + quote(w.cwd) + " --arg b " + quote(w.root) +
@@ -239,6 +246,9 @@ func (w where) copyOut(s shell, before map[string]string) error {
 			}
 		}
 	}
+	if err := copyCodexOut(s, home, w.codexAuth); err != nil {
+		return err
+	}
 	if w.gitDir != "" {
 		if err := s.rsync(s.host+":"+w.common+"/objects/", w.common+"/objects/", "--ignore-existing"); err != nil {
 			return err
@@ -272,7 +282,8 @@ func (w where) copyOut(s shell, before map[string]string) error {
 	return nil
 }
 
-// mirrorSessions copies the box's Claude session registry to the host's while
+// mirrorSessions copies the box's Claude session registry, and its Codex
+// threads' writer locks (see codexLocks), to the host's while
 // the command runs, every second, with this process's pid in place of the
 // box's. Tools on the host that ask whether a Claude session is running, and
 // whether it's busy (ferry, before it moves a task), then get the answer for
@@ -287,13 +298,24 @@ func mirrorSessions(s shell) (freeze, clear func()) {
 	written := map[string]bool{}
 	stop := make(chan struct{})
 	done := make(chan struct{})
+	codex := newCodexLocks(home)
 	sync := func() {
-		out, err := s.run(`cat ~/.claude/sessions/*.json 2>/dev/null | jq -c 'select(.sessionId) | {sessionId, status}'`)
+		// One ssh round trip a second: Claude's registry, as "C json", and the
+		// Codex threads whose writer locks are held, as "X id" (lslocks reads
+		// locks without taking them, so it can't trip a Codex starting up).
+		out, err := s.run(`{ cat ~/.claude/sessions/*.json 2>/dev/null | jq -c 'select(.sessionId) | {sessionId, status}' | sed 's/^/C /'; ` +
+			`lslocks -n -o PATH 2>/dev/null | grep '/.codex/thread-writer-locks/.*\.lock$' | sed 's|.*/||; s|\.lock$||; s/^/X /'; } 2>/dev/null`)
 		if err != nil {
 			return
 		}
 		seen := map[string]bool{}
+		threads := map[string]bool{}
 		for _, line := range strings.Split(out, "\n") {
+			if id, ok := strings.CutPrefix(line, "X "); ok {
+				threads[id] = true
+				continue
+			}
+			line = strings.TrimPrefix(line, "C ")
 			var e struct {
 				SessionID string `json:"sessionId"`
 				Status    string `json:"status"`
@@ -313,6 +335,7 @@ func mirrorSessions(s shell) (freeze, clear func()) {
 				delete(written, name)
 			}
 		}
+		codex.hold(threads)
 	}
 	go func() {
 		defer close(done)
@@ -333,6 +356,7 @@ func mirrorSessions(s shell) (freeze, clear func()) {
 		for name := range written {
 			os.Remove(name)
 		}
+		codex.release()
 	}
 	return freeze, clear
 }

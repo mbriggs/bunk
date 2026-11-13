@@ -48,7 +48,7 @@ curl -fsSL -o "$work/rex.tar.gz" "https://blob.superlogical.com/download/rex/$RE
 got=$(if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi < "$work/rex.tar.gz" | cut -d' ' -f1)
 [ "$got" = "$rex_sha" ] || { echo "build.sh: rex-linux-$arch.tar.gz is $got, not the pinned $rex_sha" >&2; exit 1; }
 tar -xzf "$work/rex.tar.gz" -C "$ctx" rex
-cp -R "$here/Containerfile" "$here/units" "$here/managed-settings.json" "$here/bunk-identity" "$ctx/"
+cp -R "$here/Containerfile" "$here/units" "$here/managed-settings.json" "$here/codex-managed-config.toml" "$here/bunk-identity" "$ctx/"
 mkdir "$ctx/hallpass-etc"
 hp=${HALLPASS_ETC:-/etc/hallpass}
 cp -R "$hp/gitconfig" "$hp/allowed_signers" "$hp/signing.pub" "$hp/gh" "$ctx/hallpass-etc/"

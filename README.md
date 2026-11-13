@@ -81,6 +81,18 @@ The copy back trusts the box with this worktree and nothing else. git objects on
 
 The box stays between runs, so installed dependencies stay too. `bunk rm --dir DIR` deletes a directory's box. It refuses while a `bunk run` is using the box, or while the box holds work that didn't come back, unless you add `--force`. `bunk gc` deletes stopped boxes unused for a week, and stopped boxes whose directory is gone.
 
+### Codex
+
+`bunk run codex` works like `bunk run claude`. bunk copies in the host's Codex config (`AGENTS.md`, `config.toml`, skills, rules, and the rest) and Codex's sessions, and copies the sessions back, so `codex resume` finds them on either side. The box's managed config turns off Codex's approvals and its own sandbox, since the VM is the boundary.
+
+A box's Codex signs in with a ChatGPT login of bunk's own, apart from the host's: Codex rotates its refresh token, so a box refreshing the host's login would sign the host out. Sign bunk in once on each build machine, with a device code you enter in any browser:
+
+```sh
+bunk codex-login
+```
+
+It runs `codex login` in a scratch box, so the host needs no Codex of its own, and keeps the login where it keeps secrets: the Keychain on a Mac, systemd-creds on Linux. When a box's Codex refreshes the login, bunk keeps the refreshed copy. Several boxes refreshing at the same moment can still sign it out; `bunk codex-login` again fixes that.
+
 ### With ferry
 
 To have ferry start every agent on a build machine in its box, put the launch prefix in that machine's `~/.config/ferry/launch`:
