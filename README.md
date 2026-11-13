@@ -14,7 +14,7 @@ A Linux build machine runs boxes in Firecracker. A Mac runs them in vfkit (Virtu
 
 ## Set up a Linux build machine
 
-You need KVM, a home directory on btrfs or xfs (a box's disk is a reflink copy of the image), podman, and hallpass with your uid in its `uids`. Boxes share your hallpass.
+You need KVM, podman, and hallpass with your uid in its `uids`. On btrfs or xfs a box's disk is an instant reflink copy of the image; elsewhere it's a sparse copy, which takes a few seconds. Boxes share your hallpass.
 
 1. From this checkout on the laptop, install bunk on the build machine. Install it beside the old binary and rename it into place, since a running box's supervisor keeps the old one open:
 
