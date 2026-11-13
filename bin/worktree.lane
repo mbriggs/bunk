@@ -1,0 +1,127 @@
+# bin/worktree.lane: what a lane isolates in this repo. bin/worktree sources
+# this file, so it is POSIX sh.
+#
+# A lane gets its own bunk home, ~/.local/share/bunk-lane-<n>, beside the
+# primary's ~/.local/share/bunk: its own boxes, running-box limit, SSH key,
+# image, and a bunk built from the lane's source. worktree.env names it in
+# BUNK_HOME, which bunk and the image scripts already read, and names the
+# lane's binary in LANE_BUNK.
+#
+# A lane shares the Claude token (boxes only read it) and the hallpass broker.
+# It has no Codex login: that lives in the primary's home and isn't copied,
+# because Codex rotates its refresh token, and a lane box refreshing a copy
+# would sign the primary's boxes out.
+
+LANE_MAX=9
+LANDING=pr
+MERGE=yes
+# The Mac's live bunk. A running box's supervisor keeps the old binary open,
+# so the new one is renamed into place.
+INSTALL='go build -o "$HOME/.local/share/bunk/bin/bunk.new" . && mv -f "$HOME/.local/share/bunk/bin/bunk.new" "$HOME/.local/share/bunk/bin/bunk"'
+VERIFY=bin/verify
+STAMPS='${BUNK_HOME:-$HOME/.local/share/bunk}/verify/*/verified'
+
+primary_home=$HOME/.local/share/bunk
+lane_home() { echo "$HOME/.local/share/bunk-lane-$1"; }
+
+# What the image is built from besides image/ itself: the guest's side of bunk.
+GUEST_PATHS='image relay clock main.go go.mod go.sum'
+
+lane_in_use() { [ -e "$(lane_home "$1")" ]; }
+
+# An instant copy where the filesystem can clone, a sparse one elsewhere.
+lane_clone() {
+  case $(uname -s) in
+    Darwin) cp -c "$1" "$2" ;;
+    *) cp --reflink=auto --sparse=always "$1" "$2" ;;
+  esac
+}
+
+lane_provision() {
+  command -v go >/dev/null || die "go isn't on PATH, and a lane builds its own bunk"
+  h=$(lane_home "$1")
+  mkdir -p "$h/bin" "$h/image"
+  # The primary's egress policy, extra login keys, and on Linux its Claude
+  # token and Firecracker. On a Mac the token is in the Keychain, which every
+  # home reads.
+  for f in allow.txt mode authorized_keys claude-token claude-token.cred bin/firecracker; do
+    if [ -f "$primary_home/$f" ]; then cp -p "$primary_home/$f" "$h/$f"; fi
+  done
+  [ -f "$h/allow.txt" ] || cp allow.txt "$h/allow.txt"
+  [ -f "$h/mode" ] || echo allowlist > "$h/mode"
+  # Each box may use 8 GB, and every lane has its own count.
+  echo 2 > "$h/max-running"
+  # The primary's image, cloned through a scratch name so a crash never leaves
+  # half of one. guest-key says what it was built from; bin/verify rebuilds
+  # the lane's image when the lane's source no longer matches.
+  for f in rootfs.ext4 Image initrd.cpio vmlinux guest-key; do
+    if [ -f "$primary_home/image/$f" ] && [ ! -f "$h/image/$f" ]; then
+      rm -f "$h/image/$f.copying"
+      lane_clone "$primary_home/image/$f" "$h/image/$f.copying"
+      mv "$h/image/$f.copying" "$h/image/$f"
+    fi
+  done
+  [ -f "$h/image/rootfs.ext4" ] || echo "the primary has no image to clone; run ./image/build.sh here before booting a box" >&2
+  # -buildvcs=false keeps go from running git status here, while setup's
+  # worktree.env.tmp file exists: with core.untrackedCache on, git went on
+  # listing that file as untracked after setup renamed it away.
+  go build -buildvcs=false -o "$h/bin/bunk" .
+  lane_set BUNK_HOME "$h"
+  lane_set LANE_BUNK "$h/bin/bunk"
+}
+
+lane_drop() {
+  h=$(lane_home "$1")
+  [ -e "$h" ] || return 0
+  # Stop and delete the lane's boxes with its own bunk, or the primary's if
+  # the lane never built one.
+  bunk=$h/bin/bunk
+  [ -x "$bunk" ] || bunk=$primary_home/bin/bunk
+  for d in "$h"/boxes/*/; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    case $name in *.new) continue ;; esac
+    [ -x "$bunk" ] || { echo "no bunk to stop box $name in $h" >&2; return 1; }
+    BUNK_HOME=$h "$bunk" rm "$name"
+  done
+  # The container image the lane built, if it built one. A daemon that's down
+  # fails here, so the registry entry stays and the next sweep tries again.
+  if [ -f "$h/image/tag" ]; then
+    c=docker
+    [ "$(uname -s)" = Linux ] && c=podman
+    tag=$(cat "$h/image/tag")
+    if ! out=$($c image rm -f "$tag" 2>&1); then
+      case $out in
+        *"o such image"*|*"image not known"*) ;;
+        *) echo "removing the image $tag: $out" >&2; return 1 ;;
+      esac
+    fi
+  fi
+  rm -rf "$h"
+}
+
+lane_info() {
+  if [ -n "$1" ]; then
+    echo "bunk      $(lane_home "$1")/bin/bunk, built from this checkout (rebuild: go build -o \"\$LANE_BUNK\" .)"
+    echo "boxes     $(lane_home "$1")/boxes, at most $(cat "$(lane_home "$1")/max-running" 2>/dev/null || echo 8) running"
+    echo "codex     no login in a lane"
+  else
+    echo "bunk      $primary_home/bin/bunk"
+    echo "boxes     $primary_home/boxes; lanes get $HOME/.local/share/bunk-lane-<n>"
+  fi
+}
+
+# After the Mac's bunk is installed: say what else runs the old code.
+lane_installed() {
+  if [ -z "$1" ]; then
+    echo "installed bunk here. If the image or a Linux build machine predates this commit, rebuild or reinstall it (README)."
+    return 0
+  fi
+  # shellcheck disable=SC2086 # GUEST_PATHS is a list of pathspecs
+  if ! git diff --quiet "$1" "$2" -- $GUEST_PATHS; then
+    echo "THE IMAGE IS STALE: this merge changed what the box image is built from. Run ./image/build.sh here, and rebuild the image on each build machine."
+  fi
+  if ! git diff --quiet "$1" "$2" -- '*.go' go.mod go.sum; then
+    echo "bunk changed: reinstall it on each Linux build machine (README, step 1)."
+  fi
+}

@@ -8,7 +8,11 @@
 # With OFFLINE=1, it skips the checks that need a Claude token or the build
 # machine's hallpass broker, as in CI.
 set -u
-"${BUNK:-bunk}" ssh "$1" "OFFLINE=${OFFLINE:-} sh -s" <<'CHECKS'
+# In a lane, the lane's bunk and its home (see bin/worktree.lane).
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/bin/worktree-env.sh"
+worktree_load "$here"
+"${BUNK:-${LANE_BUNK:-bunk}}" ssh "$1" "OFFLINE=${OFFLINE:-} sh -s" <<'CHECKS'
 fails=0
 online() { if [ -n "$OFFLINE" ]; then echo "skip  $1"; else check "$@"; fi; }
 check() { name=$1; shift; if out=$("$@" 2>&1); then echo "ok    $name"; else echo "FAIL  $name: $(echo "$out" | tail -1)"; fails=$((fails+1)); fi; }
