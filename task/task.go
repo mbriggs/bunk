@@ -44,6 +44,8 @@ type where struct {
 	gitDir string   // the worktree's own git directory; "" outside git
 	common string   // the repository's shared git directory
 	claude []string // Claude's session folders, relative to home
+	others []string // the repository's other worktrees under root, relative to it
+	branch string   // the branch the host's HEAD was on at copyIn; "" if detached
 
 	agent     string // "claude" or "codex" when the command runs one of them
 	codexAuth []byte // the Codex login copyIn gave the box, for copyOut
@@ -164,6 +166,9 @@ func find(dir string) (where, error) {
 		if w.common, err = git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"); err != nil {
 			return where{}, err
 		}
+		if w.others, err = otherWorktrees(w.root); err != nil {
+			return where{}, err
+		}
 	}
 	for _, d := range uniq(w.cwd, w.root) {
 		w.claude = append(w.claude, filepath.Join(".claude", "projects", claudeSlug(d)))
@@ -183,9 +188,11 @@ func claudeSlug(dir string) string { return nonAlnum.ReplaceAllString(dir, "-") 
 func (w *where) copyIn(s shell) (map[string]string, error) {
 	refs := map[string]string{}
 	if w.gitDir != "" {
-		if b, err := git(w.root, "symbolic-ref", "-q", "HEAD"); err == nil {
-			refs[b], _ = git(w.root, "rev-parse", "-q", "--verify", b)
+		var err error
+		if refs, err = branches(w.root); err != nil {
+			return nil, err
 		}
+		w.branch, _ = git(w.root, "symbolic-ref", "-q", "HEAD")
 	}
 	dirs := []string{w.root}
 	if w.common != "" && !inside(w.common, w.root) {
@@ -204,7 +211,11 @@ func (w *where) copyIn(s shell) (map[string]string, error) {
 		return nil, err
 	}
 	for _, d := range dirs {
-		if err := s.rsync(d+"/", s.host+":"+d+"/", "--delete"); err != nil {
+		flags := []string{"--delete"}
+		if d == w.root {
+			flags = append(flags, w.skipOthers()...)
+		}
+		if err := s.rsync(d+"/", s.host+":"+d+"/", flags...); err != nil {
 			return nil, err
 		}
 	}
@@ -300,18 +311,12 @@ func (w where) copyOut(s shell, before map[string]string) error {
 			if err != nil {
 				return err
 			}
-			// The host's branch must be as it was, or absent if the box made it.
-			old := before[branch]
-			if old == "" {
-				old = strings.Repeat("0", 40)
-			}
-			if _, err := git(w.root, "update-ref", branch, sha, old); err != nil {
-				return fmt.Errorf("%s moved here while the box had it, so nothing came back but Claude's sessions. "+
-					"The box's %s is %s, already in this repository: merge or cherry-pick it", branch, branch, sha[:12])
+			if err := w.moveBranch(branch, sha, before); err != nil {
+				return err
 			}
 		}
 	}
-	if err := s.rsync(s.host+":"+w.root+"/", w.root+"/", "--delete", "--exclude=/.git"); err != nil {
+	if err := s.rsync(s.host+":"+w.root+"/", w.root+"/", append([]string{"--delete", "--exclude=/.git"}, w.skipOthers()...)...); err != nil {
 		return err
 	}
 	if w.gitDir != "" {
@@ -320,6 +325,92 @@ func (w where) copyOut(s shell, before map[string]string) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// otherWorktrees returns the repository's other worktrees that sit under
+// root, relative to it: a primary checkout's lanes in .claude/worktrees, say.
+// Each belongs to its own box, or to whoever works there on the host, so
+// neither copy touches them. Copying them back would put them as they were
+// at copyIn over whatever was done there since.
+func otherWorktrees(root string) ([]string, error) {
+	out, err := git(root, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	var others []string
+	for _, line := range strings.Split(out, "\n") {
+		path, ok := strings.CutPrefix(line, "worktree ")
+		if !ok || path == root || !inside(path, root) {
+			continue
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil, err
+		}
+		others = append(others, rel)
+	}
+	return others, nil
+}
+
+// rsyncSpecial is what rsync reads as a wildcard in an exclude pattern.
+var rsyncSpecial = regexp.MustCompile(`[\\*?\[]`)
+
+// skipOthers is the rsync flags that leave w.others out of a copy of root, in
+// either direction: an excluded path isn't sent, and --delete leaves it be.
+func (w where) skipOthers() []string {
+	var flags []string
+	for _, rel := range w.others {
+		flags = append(flags, "--exclude=/"+rsyncSpecial.ReplaceAllString(rel, `\$0`)+"/")
+	}
+	return flags
+}
+
+// branches returns the repository's local branches and the commit each is on.
+func branches(root string) (map[string]string, error) {
+	out, err := git(root, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
+	if err != nil {
+		return nil, err
+	}
+	refs := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		if ref, sha, ok := strings.Cut(line, " "); ok {
+			refs[ref] = sha
+		}
+	}
+	return refs, nil
+}
+
+var commitID = regexp.MustCompile(`^[0-9a-f]{40}(?:[0-9a-f]{24})?$`)
+
+// moveBranch moves the host's branch to sha, the commit the box's HEAD is
+// on, if the host's copy of the branch is as it was in before, or absent if
+// the box made it. branch and sha are the box's git's answers, so they're
+// checked before git here sees them: anything else in their place could be an
+// option to update-ref, such as -d, or a ref that isn't a branch.
+//
+// The box moves only the branch the worktree was on, and makes new ones. It
+// may switch to another branch that exists here, but not move it.
+func (w where) moveBranch(branch, sha string, before map[string]string) error {
+	if !strings.HasPrefix(branch, "refs/heads/") || !commitID.MatchString(sha) ||
+		exec.Command("git", "check-ref-format", branch).Run() != nil {
+		return fmt.Errorf("the box's HEAD isn't a branch on a commit (%q on %q), so nothing came back but Claude's sessions", branch, sha)
+	}
+	if _, err := git(w.root, "cat-file", "-e", sha+"^{commit}"); err != nil {
+		return fmt.Errorf("the box's %s is on %s, which isn't a commit in this repository, so nothing came back but Claude's sessions", branch, sha[:12])
+	}
+	old, existed := before[branch]
+	if !existed {
+		old = strings.Repeat("0", len(sha))
+	}
+	if existed && branch != w.branch && sha != old {
+		return fmt.Errorf("the box moved %s, which isn't the branch this worktree was on, so nothing came back but Claude's sessions. "+
+			"The box's %s is %s, already in this repository: merge or cherry-pick it", branch, branch, sha[:12])
+	}
+	if _, err := git(w.root, "update-ref", "--", branch, sha, old); err != nil {
+		return fmt.Errorf("%s moved here while the box had it, so nothing came back but Claude's sessions. "+
+			"The box's %s is %s, already in this repository: merge or cherry-pick it", branch, branch, sha[:12])
 	}
 	return nil
 }

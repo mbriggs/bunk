@@ -194,7 +194,10 @@ func dial(name, port string) (net.Conn, error) {
 
 var cgnat = netip.MustParsePrefix("100.64.0.0/10")
 
+// A literal address comes back from the resolver IPv4-mapped
+// (::ffff:100.64.0.1), which no IPv4 prefix contains, so it's unmapped first.
 func public(a netip.Addr) bool {
+	a = a.Unmap()
 	return a.IsGlobalUnicast() && !a.IsPrivate() && !cgnat.Contains(a)
 }
 

@@ -8,7 +8,7 @@ description: TLA+ check that bunk never throws away a box's work or the host's c
 **Property.** Work an agent did in a box is never copied over or deleted unless the user passes `--force` or names the box in `bunk rm NAME`, and the copy back moves the host's branch only if the branch is still on the commit the box started from.
 **Harm if broken.** The user loses what the agent did (often hours of uncommitted work), or loses their own commits from the branch, with no error.
 
-The README promises this under "Use it": a box whose work didn't come back is held until `bunk rm --dir DIR`, and "the branch moves only if nothing moved it on the host meanwhile".
+The README promises this under "Use it": a box whose work didn't come back is held until `bunk rm --dir DIR --force`, and "the branch moves only if nothing moved it on the host meanwhile".
 
 The model is `verify/copy-back/CopyBack.tla`. It has one directory's box, two `bunk run`s, `bunk rm --dir`, `bunk gc`, and the user moving the branch on the host at any moment. Five rules, each named for who must not do the harm:
 
@@ -24,7 +24,7 @@ A box "holds work" (`held` in the model) from when a command runs in it until a 
 
 ## Does the change touch it
 
-Last confirmed against the code at the commit that made `task.Run` write `unsynced` before the command (its parent is `0dae8fa`). `check.sh` hashes `task/task.go`, `box/box.go`, `box/run.go`, and `main.go`, and reports `STALE` when one changes. Check the model when a diff changes any of these:
+Last confirmed against the code at the commit that made `bunk gc` skip a box with an `unsynced` file (its parent is `94f5903`). `check.sh` hashes `task/task.go`, `box/box.go`, `box/run.go`, and `main.go`, and reports `STALE` when one changes. Check the model when a diff changes any of these:
 
 | Code | Model action |
 | --- | --- |
@@ -35,9 +35,9 @@ Last confirmed against the code at the commit that made `task.Run` write `unsync
 | `copyIn`: the `refs` read at its start, and the `rsync --delete` loop | `RunReadsRefs`, `RunCopiesIn`, `RunCopyInFails` |
 | `GiveClaudeToken` and `TakeClaudeToken` before `copyIn` in `task.Run` | `RunCopyInFails` (a failure there returns before anything is copied) |
 | `s.interactive` and its signal handling | `RunCommand`, `RunKilled` |
-| `copyOut`: the order of its steps, `git update-ref branch sha old`, the working tree rsync | `RunMovesBranch`, `RunCopiesBack`, `RunCopyOutFails` |
+| `copyOut`: the order of its steps, `git update-ref -- branch sha old` in `moveBranch`, the working tree rsync | `RunMovesBranch`, `RunCopiesBack`, `RunCopyOutFails` |
 | `task.Remove` without force | `RmLooks`, `RmLocks`, `RmChecksMarker`, `RmRemoves` |
-| `box.GC` in `box/box.go`: which boxes it skips | `GcLooks`, `GcRemoves` |
+| `box.GC` in `box/box.go`: which boxes it skips (running ones, and ones with an `unsynced` file) | `GcLooks`, `GcRemoves` |
 | `Box.Remove`, `Box.Stop`, `Box.Running`, `Box.Create` in `box/box.go` | `RemoveBox`, `running`, `RunCreates` |
 | `Box.Up`, `Box.Start`, the supervisor's lock in `Box.Run`, in `box/run.go` | `RunUp*`, `running`, `VMStopsByItself` |
 | the `run`, `rm`, and `gc` cases in `main.go` | which commands exist |
@@ -47,7 +47,7 @@ A change elsewhere in those files doesn't touch the model: what gets copied (Cla
 The model treats these as one step each, because each is one in the code:
 - `Box.Create`: it builds the box aside and renames it into place.
 - `lockRun`: one `flock`. The lock file is inside the box's directory, so removing the box frees it, and the kernel frees it when its holder dies.
-- `git update-ref branch sha old`: git's own compare-and-swap.
+- `git update-ref -- branch sha old`: git's own compare-and-swap.
 - `Box.Remove`: the model does `Stop` and `RemoveAll` together. A process killed between them isn't modeled.
 - `Box.Up` and the cleanup after it fails: the run holds the run lock throughout.
 - The end of `copyOut` and `os.Remove(unsynced)`: two steps in the code. A run that dies between them leaves a box held with nothing in it to lose, which breaks no rule.
@@ -74,7 +74,7 @@ Each scenario is a `.cfg` with two runs and up to two branch moves on the host, 
 | --- | --- | --- |
 | `Base` | nothing. gc runs only while no `bunk run` or `bunk rm --dir` is partway through | every rule holds |
 | `KilledRun` | a `bunk run` can die at any step | every rule holds |
-| `VMStops` | the box's VM can stop by itself | breaks `GcNeverRemovesHeldWork`, `RunNeverRemovesHeldWork` |
+| `VMStops` | the box's VM can stop by itself, or by `bunk stop NAME` | breaks `RunNeverRemovesHeldWork` |
 | `GcRaces` | gc runs at any moment, and other commands take steps between its look at a box and its removal | breaks `GcNeverRemovesHeldWork`, `RmDirNeverRemovesHeldWork`, `RunNeverCopiesOverHeldWork` |
 
 The breaks in `VMStops` and `GcRaces` are findings about bunk as it is at the sync commit, listed below. `check.sh` fails if a scenario breaks a rule that isn't in its list, or stops breaking one that is.
@@ -95,12 +95,12 @@ Then decide which it is:
 
 Still open at the sync commit. Don't "fix" the model to hide them.
 
-1. **`bunk gc` doesn't read `unsynced`** (`VMStops`). A box that holds work and whose VM stopped (a host reboot) is deleted once it's a week unused, or at once if its directory is gone. Read from the code, not replayed.
-2. **`bunk run`'s cleanup can delete a held box** (`VMStops`). It needs a run paused between `b.Create` and `lockRun` while another run finishes with work held, then a VM stop and a failed start. Not replayed; very unlikely.
-3. **gc takes no lock** (`GcRaces`). `run.lock` is inside the directory gc removes, and gc looks and removes in two steps. Each path needs gc to hit a window of microseconds as a run starts, and then stall. Not replayed; very unlikely.
+1. **`bunk run`'s cleanup can delete a held box** (`VMStops`). It needs a run paused between `b.Create` and `lockRun` while another run finishes with work held, then a VM stop and a failed start. Not replayed; very unlikely.
+2. **gc takes no lock** (`GcRaces`). `run.lock` is inside the directory gc removes, and gc looks and removes in two steps. Each path needs gc to hit a window of microseconds as a run starts, and then stall. Not replayed; very unlikely.
 
-Two findings were fixed at the sync commit, and the model guards both. If either comes back, `check.sh` fails:
+Three findings were fixed at or before the sync commit, and the model guards each. If one comes back, `check.sh` fails:
 
+- `bunk gc` didn't read `unsynced`, so it deleted a box that held work once its VM had stopped (a host reboot, or `bunk stop`) and it was a week unused, or at once if its directory was gone. `box.GC` now skips a box with the file. `VMStops` checks it.
 - A `bunk run` that died left no `unsynced` file, so the next run copied over the box's work and `bunk rm --dir` deleted it. `task.Run` now writes the file before the command starts. `KilledRun` checks it.
 - `copyIn` read the host's branch after it copied the repository, so a commit made on the host in between was dropped from the branch at the copy back. It now reads the branch first. Every scenario checks it, since the host's branch moves at any moment in all of them.
 
@@ -112,7 +112,7 @@ Two findings were fixed at the sync commit, and the model guards both. If either
 4. Update the coverage table here, and `covered` in `check.sh` if files were added.
 5. Only after you've confirmed the model describes the code at the new commit: run `verify/copy-back/check.sh --resync`, and change the sync commit in this file to that commit.
 
-To see that a rule can still fail, break its guard in a scratch copy of the model and run `Base`. Each of these broke a rule in `Base`: run skips the `unsynced` check, run removes `unsynced` when the copy back fails, run skips `lockRun`, run's cleanup drops `!b.Running()`, `rm --dir` skips `lockRun`, `rm --dir` skips the `unsynced` check, gc drops the `Running` check, `update-ref` without the old value, and `copyIn` reads `refs` after the rsync. Dropping the `unsynced` write before the command broke a rule in `KilledRun`.
+To see that a rule can still fail, break its guard in a scratch copy of the model and run `Base`. Each of these broke a rule in `Base`: run skips the `unsynced` check, run removes `unsynced` when the copy back fails, run skips `lockRun`, run's cleanup drops `!b.Running()`, `rm --dir` skips `lockRun`, `rm --dir` skips the `unsynced` check, gc drops the `Running` check, gc drops the `unsynced` check (in `VMStops`), `update-ref` without the old value, and `copyIn` reads `refs` after the rsync. Dropping the `unsynced` write before the command broke a rule in `KilledRun`.
 
 ## What this doesn't cover
 
@@ -122,6 +122,6 @@ To see that a rule can still fail, break its guard in a scratch copy of the mode
 - `bunk rm NAME`, `--force`, and `bunk up NAME`.
 - What the copies carry: whether rsync's flags, excludes, and paths bring back the right files, and whether `.git` hooks and config stay out.
 - Work the box hasn't flushed to its disk when the VM stops.
-- A branch the box switched to, a detached `HEAD`, and directories outside git.
+- A branch the box switched to, a detached `HEAD`, and directories outside git. `moveBranch` refuses a move of a branch the worktree wasn't on, and anything from the box that isn't a branch and a commit; `task/task_test.go` checks both.
 - Host files changed in the worktree while the box ran. The copy back overwrites them by design.
 - Liveness: nothing here says a run finishes or a held box is ever released.

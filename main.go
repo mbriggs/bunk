@@ -23,8 +23,11 @@ import (
 const usage = `usage:
   bunk up NAME       create a box, boot it, and print its SSH host key
   bunk rm NAME       stop a box and delete it
+  bunk stop NAME     stop a box and keep it; the next bunk run or up boots it
   bunk ls            list boxes, and when each was last used
-  bunk gc [DAYS]     delete stopped boxes unused for DAYS days (default 7); running ones are never touched
+  bunk gc [DAYS]     delete stopped boxes unused for DAYS days (default 7), but none
+                     that holds work. Running ones are never touched: it prints
+                     "idle NAME" for each as long unused, for bunk stop
   bunk run CMD...    run CMD for this directory in its own box: copy the directory
                      in, run CMD there on this terminal, and copy the results back
   bunk rm --dir DIR [--force]  delete DIR's box, unless a bunk run is using it
@@ -85,6 +88,15 @@ func run(args []string) error {
 			return err
 		}
 		return b.Remove()
+	case cmd == "stop" && len(rest) == 1:
+		b, err := box.Open(rest[0])
+		if err != nil {
+			return err
+		}
+		if !b.Exists() {
+			return fmt.Errorf("no box %s", b.Name)
+		}
+		return b.Stop()
 	case cmd == "ls" && len(rest) == 0:
 		return ls()
 	case cmd == "gc" && len(rest) <= 1:
@@ -95,9 +107,12 @@ func run(args []string) error {
 				return fmt.Errorf("gc: %q isn't a number of days", rest[0])
 			}
 		}
-		removed, err := box.GC(time.Duration(days) * 24 * time.Hour)
+		removed, idle, err := box.GC(time.Duration(days) * 24 * time.Hour)
 		for _, n := range removed {
 			fmt.Println("removed", n)
+		}
+		for _, n := range idle {
+			fmt.Println("idle", n)
 		}
 		return err
 	case cmd == "codex-login" && len(rest) == 0:

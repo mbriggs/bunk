@@ -53,7 +53,7 @@ command -v java >/dev/null || { echo "java not found; TLC needs Java 11 or later
 expect=(
   "Base:"
   "KilledRun:"
-  "VMStops:GcNeverRemovesHeldWork RunNeverRemovesHeldWork"
+  "VMStops:RunNeverRemovesHeldWork"
   "GcRaces:GcNeverRemovesHeldWork RmDirNeverRemovesHeldWork RunNeverCopiesOverHeldWork"
 )
 

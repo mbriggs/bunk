@@ -69,24 +69,48 @@ func TestKillOrphanVMSparesOtherProcesses(t *testing.T) {
 }
 
 // GC removes a stopped box unused for longer than the age, and keeps a
-// recent one.
+// recent one, one that holds work, and one that's running, which it names
+// as idle.
 func TestGCRemovesOnlyOldBoxes(t *testing.T) {
 	testHome(t)
 	old, _ := Open("old")
 	recent, _ := Open("recent")
-	for _, b := range []Box{old, recent} {
+	held, _ := Open("held")
+	running, _ := Open("running")
+	weekAgo := time.Now().Add(-8 * 24 * time.Hour)
+	for _, b := range []Box{old, recent, held, running} {
 		if err := b.Create(""); err != nil {
 			t.Fatal(err)
 		}
 		os.WriteFile(b.path("supervisor.log"), []byte("started\n"), 0o600)
+		if b != recent {
+			os.Chtimes(b.path("supervisor.log"), weekAgo, weekAgo)
+		}
 	}
-	weekAgo := time.Now().Add(-8 * 24 * time.Hour)
-	os.Chtimes(old.path("supervisor.log"), weekAgo, weekAgo)
-	removed, err := GC(7 * 24 * time.Hour)
+	os.WriteFile(held.path("unsynced"), []byte("the bunk run that made it was interrupted\n"), 0o600)
+	// A supervisor holds its box's lock for as long as it runs.
+	lock, err := os.OpenFile(running.path("lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(removed) != 1 || removed[0] != "old" || old.Exists() || !recent.Exists() {
-		t.Fatalf("GC removed %v; old exists %v, recent exists %v", removed, old.Exists(), recent.Exists())
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, idle, err := GC(7 * 24 * time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 || removed[0] != "old" || old.Exists() {
+		t.Errorf("GC removed %v, want only old; old exists %v", removed, old.Exists())
+	}
+	if len(idle) != 1 || idle[0] != "running" {
+		t.Errorf("GC called %v idle, want only running", idle)
+	}
+	for _, b := range []Box{recent, held, running} {
+		if !b.Exists() {
+			t.Errorf("GC removed %s", b.Name)
+		}
 	}
 }
