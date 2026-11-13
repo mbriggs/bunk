@@ -1,0 +1,6 @@
+interface:
+  display_name: "Verify bunk"
+  short_description: "Drive this checkout's bunk against real boxes in a scratch home"
+  default_prompt: "Use $verify-bunk to prove this change works in a real box."
+policy:
+  allow_implicit_invocation: true
