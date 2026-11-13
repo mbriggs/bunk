@@ -102,12 +102,12 @@ func (b Box) SSHConfig() (string, error) {
   IdentityAgent none
   UserKnownHostsFile %s
   StrictHostKeyChecking yes
-  ProxyCommand %s proxy %s
+  ProxyCommand env %s=proxy %s proxy %s
   LogLevel ERROR
   ControlMaster auto
   ControlPath %s
   ControlPersist 30
-`, b.Name, strings.TrimSpace(string(user)), filepath.Join(Home(), "id_ed25519"), b.path("known_hosts"), self, b.Name, b.path("ssh.ctl"))
+`, b.Name, strings.TrimSpace(string(user)), filepath.Join(Home(), "id_ed25519"), b.path("known_hosts"), helperEnv, self, b.Name, b.path("ssh.ctl"))
 	path := b.path("ssh_config")
 	return path, os.WriteFile(path, []byte(cfg), 0o600)
 }
