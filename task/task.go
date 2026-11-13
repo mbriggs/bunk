@@ -278,6 +278,11 @@ func (w where) copyOut(s shell, before map[string]string) error {
 	home, _ := os.UserHomeDir()
 	for _, c := range w.claude {
 		if _, err := s.run("test -d " + quote(c)); err == nil {
+			// rsync makes only the last directory, and a host where Claude
+			// never ran has no ~/.claude/projects.
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(home, c)), 0o700); err != nil {
+				return err
+			}
 			if err := s.rsync(s.host+":"+c+"/", filepath.Join(home, c)+"/"); err != nil {
 				return err
 			}

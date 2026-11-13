@@ -158,6 +158,11 @@ const DefaultMaxRunning = 8
 // lock, held until the new supervisor holds its box's lock, so parallel `up`s
 // can't all see room for one more.
 func (b Box) Start() (<-chan error, error) {
+	if os.Getenv(helperEnv) != "" {
+		// A helper (see Helper) that ran something else, such as a test
+		// binary running its tests again: starting more would never end.
+		return nil, errors.New("a box's helper can't start boxes")
+	}
 	lock, err := os.OpenFile(filepath.Join(Home(), "start.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
@@ -191,6 +196,7 @@ func (b Box) Start() (<-chan error, error) {
 	}
 	defer logf.Close()
 	sup := exec.Command(self, "supervise", b.Name)
+	sup.Env = append(os.Environ(), helperEnv+"=supervise")
 	sup.Stdout, sup.Stderr = logf, logf
 	sup.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := sup.Start(); err != nil {

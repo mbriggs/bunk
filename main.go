@@ -4,17 +4,13 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -43,6 +39,13 @@ inside a box:
 
 func main() {
 	log.SetFlags(0)
+	if ok, err := box.Helper(os.Args[1:]); ok {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "bunk:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "bunk:", err)
 		os.Exit(1)
@@ -113,10 +116,6 @@ func run(args []string) error {
 			return err
 		}
 		return syscall.Exec(ssh, append([]string{"ssh", "-F", cfg, b.Name}, rest[1:]...), os.Environ())
-	case cmd == "proxy" && len(rest) == 1:
-		return proxy(rest[0])
-	case cmd == "supervise" && len(rest) == 1:
-		return supervise(rest[0])
 	case cmd == "guest" && len(rest) == 3 && rest[0] == "relay":
 		return guestRelay(rest[1], rest[2])
 	case cmd == "guest" && len(rest) == 2 && rest[0] == "clock":
@@ -185,42 +184,6 @@ func ls() error {
 	}
 	fmt.Fprintf(os.Stderr, "%d of %d running\n", running, box.MaxRunning())
 	return nil
-}
-
-// proxy splices stdin and stdout to the box's sshd. name may be an ssh alias
-// like t1.kant.box; the box is the part before the first dot.
-func proxy(name string) error {
-	name, _, _ = strings.Cut(name, ".")
-	b, err := box.Open(name)
-	if err != nil {
-		return err
-	}
-	c, err := b.DialGuest(22)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-	go func() {
-		io.Copy(c, os.Stdin)
-		c.Close()
-	}()
-	// When ssh finishes, stdin closes and the goroutine closes c under this
-	// copy. That's the session ending, not a failure.
-	if _, err := io.Copy(os.Stdout, c); err != nil && !errors.Is(err, net.ErrClosed) {
-		return err
-	}
-	return nil
-}
-
-func supervise(name string) error {
-	b, err := box.Open(name)
-	if err != nil {
-		return err
-	}
-	log.SetFlags(log.LstdFlags)
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
-	return b.Run(ctx)
 }
 
 // guestRelay is the guest end of a hallpass socket.
