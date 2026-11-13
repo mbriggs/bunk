@@ -30,6 +30,7 @@ The first Bash command in a new worktree provisions the lane and reports its val
 
 - Run the lane's bunk as `"$LANE_BUNK"`, never a bare `bunk`, which is the primary's installed build or nothing. After you change Go code, rebuild it: `go build -o "$LANE_BUNK" .`
 - `"$LANE_BUNK" up NAME`, `ls`, `rm NAME`, and `run` all act on the lane's home. Remove the boxes you make. Teardown stops and deletes any that are left.
+- `bin/install` in a lane rebuilds the lane's bunk and, if it's stale, the lane's image. With a host or `--all` it refuses in a lane.
 - `./check.sh BOX` and `./image/build.sh` load the lane themselves and refuse to start in a worktree with no lane.
 - `go test ./...` touches nothing outside the checkout.
 - After you change `image/`, `relay/`, `clock/`, `main.go`, or `go.mod`, the lane's image is stale. `bin/verify` rebuilds it, or run `./image/build.sh` (about a minute, needs Docker running).
@@ -57,10 +58,10 @@ A lane lands as one commit in a squash-merged PR. Run gh as `/opt/hallpass/bin/h
 5. `bin/worktree land --message MSGFILE --body BODYFILE`. It pushes the branch and opens or updates the PR.
 6. Own the PR until it merges. Watch CI in the background: `/opt/hallpass/bin/hallpass gh pr checks BRANCH --watch`. Fix failures and review comments in the lane, then land again from step 2.
 7. When the checks are green, merge it: from the primary, `bin/worktree merge NAME`. The user has decided that agents merge every green PR, so "land it" includes the merge here. Always merge through `bin/worktree merge`, never `gh pr merge`.
-8. `merge` then syncs: it fast-forwards the primary's `main` and installs bunk into `~/.local/share/bunk/bin`. If the user merged the PR themselves, run `bin/worktree sync` from the primary. Relay what it prints:
-   - `NOT INSTALLED`: give the user the command it names to run in the primary.
-   - `THE IMAGE IS STALE`: the user runs `./image/build.sh` in the primary and rebuilds the image on each build machine.
-   - `bunk changed`: the user reinstalls bunk on each Linux build machine (README, step 1).
+8. `merge` then syncs: it fast-forwards the primary's `main` and runs `bin/install` there, which installs bunk into `~/.local/share/bunk/bin` and rebuilds this machine's image if the merge changed what it is built from. If the user merged the PR themselves, run `bin/worktree sync` from the primary. Relay what it prints:
+   - `NOT INSTALLED`: give the user the command it names to run in the primary. An image build needs Docker running.
+   - `THE BUILD MACHINES ARE STALE`: the user runs `bin/install --all` in the primary, or `bin/install HOST`. Don't run it yourself unless asked: it changes other machines.
+   - Boxes made from an older image: tell the user which, since removing a box is theirs to decide.
 
 To keep working in the lane after a squash merge, run `git fetch origin main && git rebase --onto origin/main <merged PR head>`. A plain rebase replays the squashed commits.
 
