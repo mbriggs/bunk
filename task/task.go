@@ -122,6 +122,12 @@ func Run(dir string, argv []string) (int, error) {
 	if err != nil {
 		return 1, fmt.Errorf("copying %s into box %s: %w", w.root, b.Name, err)
 	}
+	// From here the box may hold work the host lacks, and the file says so
+	// until the copy back is done. A run that dies partway writes nothing
+	// more, so the box it leaves is still held.
+	if err := os.WriteFile(unsynced, []byte("the bunk run that made it was interrupted\n"), 0o600); err != nil {
+		return 1, err
+	}
 	freeze, clear := mirrorSessions(s)
 	status := s.interactive("cd " + quote(w.cwd) + " && exec " + quoteAll(argv))
 	// The box's Claude has gone, but its work isn't home yet: keep the
@@ -131,6 +137,9 @@ func Run(dir string, argv []string) (int, error) {
 	if err := w.copyOut(s, refs); err != nil {
 		os.WriteFile(unsynced, []byte(err.Error()+"\n"), 0o600)
 		return status, fmt.Errorf("copying %s back from box %s: %w", w.root, b.Name, err)
+	}
+	if err := os.Remove(unsynced); err != nil {
+		return status, err
 	}
 	return status, nil
 }
@@ -168,8 +177,16 @@ var nonAlnum = regexp.MustCompile(`[^a-zA-Z0-9]`)
 func claudeSlug(dir string) string { return nonAlnum.ReplaceAllString(dir, "-") }
 
 // copyIn makes the box's copies match the host's, and returns the host's
-// branches as they were, for copyOut to check against.
+// branches as they were, for copyOut to check against. It reads them before
+// it copies the repository: a branch that moves here during the copy may or
+// may not reach the box, and either way copyOut then finds it moved.
 func (w *where) copyIn(s shell) (map[string]string, error) {
+	refs := map[string]string{}
+	if w.gitDir != "" {
+		if b, err := git(w.root, "symbolic-ref", "-q", "HEAD"); err == nil {
+			refs[b], _ = git(w.root, "rev-parse", "-q", "--verify", b)
+		}
+	}
 	dirs := []string{w.root}
 	if w.common != "" && !inside(w.common, w.root) {
 		dirs = append(dirs, w.common)
@@ -213,12 +230,6 @@ func (w *where) copyIn(s shell) (map[string]string, error) {
 		" '.projects[$a].hasTrustDialogAccepted = true | .projects[$b].hasTrustDialogAccepted = true' \"$f\" > \"$f.new\" && mv \"$f.new\" \"$f\""
 	if _, err := s.run(trust); err != nil {
 		return nil, err
-	}
-	refs := map[string]string{}
-	if w.gitDir != "" {
-		if b, err := git(w.root, "symbolic-ref", "-q", "HEAD"); err == nil {
-			refs[b], _ = git(w.root, "rev-parse", "-q", "--verify", b)
-		}
 	}
 	return refs, nil
 }
